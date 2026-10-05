@@ -24,6 +24,15 @@ def init_db():
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fact TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
 
 def add_message(role, content):
@@ -47,3 +56,25 @@ def get_recent_messages(limit=20):
             (limit,),
         ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+def add_fact(fact):
+    fact = fact.strip()
+    if not fact:
+        return None
+    with closing(get_connection()) as conn:
+        with conn:
+            cur = conn.execute("INSERT OR IGNORE INTO facts (fact) VALUES (?)", (fact,))
+            return cur.lastrowid if cur.rowcount else None
+
+
+def list_facts():
+    with closing(get_connection()) as conn:
+        rows = conn.execute("SELECT id, fact FROM facts ORDER BY id ASC").fetchall()
+    return [{"id": r["id"], "fact": r["fact"]} for r in rows]
+
+
+def delete_fact(fact_id):
+    with closing(get_connection()) as conn:
+        with conn:
+            cur = conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+            return cur.rowcount > 0

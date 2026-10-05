@@ -1,8 +1,15 @@
 import ollama
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from database import add_message, get_recent_messages, init_db
+from database import (
+    add_fact,
+    add_message,
+    delete_fact,
+    get_recent_messages,
+    init_db,
+    list_facts,
+)
 
 MODEL = "qwen2.5:7b"
 
@@ -33,6 +40,29 @@ def health():
 @app.get("/history")
 def history():
     return get_recent_messages(50)
+
+class FactRequest(BaseModel):
+    fact: str
+
+
+@app.get("/facts")
+def get_facts():
+    return list_facts()
+
+
+@app.post("/facts")
+def create_fact(req: FactRequest):
+    fact_id = add_fact(req.fact)
+    if fact_id is None:
+        raise HTTPException(status_code=400, detail="Empty or duplicate fact")
+    return {"id": fact_id, "fact": req.fact.strip()}
+
+
+@app.delete("/facts/{fact_id}")
+def remove_fact(fact_id: int):
+    if not delete_fact(fact_id):
+        raise HTTPException(status_code=404, detail="Fact not found")
+    return {"deleted": fact_id}
 
 
 @app.post("/chat", response_model=ChatResponse)
