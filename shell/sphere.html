@@ -16,21 +16,115 @@
         display: grid;
         place-items: center;
       }
-      .sphere {
+
+      .orb {
+        position: relative;
         width: 80px;
         height: 80px;
+        --glow: 80, 170, 255;
+        --breathe: 4s;
+      }
+      .orb[data-state="listening"] {
+        --glow: 60, 230, 170;
+        --breathe: 2s;
+      }
+      .orb[data-state="thinking"] {
+        --glow: 170, 110, 255;
+        --breathe: 1.4s;
+      }
+      .orb[data-state="speaking"] {
+        --glow: 110, 200, 255;
+        --breathe: 0.7s;
+      }
+
+      .sphere {
+        position: absolute;
+        inset: 0;
         border-radius: 50%;
         background: radial-gradient(
           circle at 30% 30%,
-          #b8f0ff,
-          #2b8cff 45%,
-          #0a2a66 100%
+          rgba(255, 255, 255, 0.85),
+          rgb(var(--glow)) 45%,
+          #08213f 100%
         );
-        box-shadow: 0 0 24px rgba(80, 170, 255, 0.8);
+        box-shadow: 0 0 24px rgba(var(--glow), 0.8);
+        animation: breathe var(--breathe) ease-in-out infinite;
+      }
+
+      .ring {
+        position: absolute;
+        inset: -10px;
+        border-radius: 50%;
+        border: 2px solid rgba(var(--glow), 0.8);
+        border-top-color: transparent;
+        border-bottom-color: transparent;
+        opacity: 0;
+        animation: spin 1.2s linear infinite;
+      }
+      .orb[data-state="thinking"] .ring {
+        opacity: 1;
+      }
+
+      .ripple {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 2px solid rgba(var(--glow), 0.7);
+        opacity: 0;
+      }
+      .orb[data-state="listening"] .ripple {
+        animation: ripple 1.6s ease-out infinite;
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.07);
+        }
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes ripple {
+        0% {
+          transform: scale(1);
+          opacity: 0.7;
+        }
+        100% {
+          transform: scale(1.6);
+          opacity: 0;
+        }
       }
     </style>
   </head>
   <body>
-    <div class="sphere"></div>
+    <div class="orb" id="orb" data-state="idle">
+      <div class="ripple"></div>
+      <div class="ring"></div>
+      <div class="sphere"></div>
+    </div>
+
+    <script>
+      const orb = document.getElementById("orb");
+
+      function setOrbState(state) {
+        orb.dataset.state = state;
+      }
+      window.setOrbState = setOrbState;
+
+      // TEMPORARY TEST: cycles through the states every 4 seconds.
+      // We remove this in Task 3.5 when real events control the sphere.
+      const states = ["idle", "listening", "thinking", "speaking"];
+      let i = 0;
+      setInterval(() => {
+        i = (i + 1) % states.length;
+        setOrbState(states[i]);
+      }, 4000);
+    </script>
   </body>
 </html>
