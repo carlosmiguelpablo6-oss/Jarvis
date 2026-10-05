@@ -110,7 +110,7 @@
     </div>
 
     <script>
-      const orb = document.getElementById("orb");
+     const orb = document.getElementById("orb");
 orb.style.cursor = "pointer";
 
 function setOrbState(state) {
@@ -118,14 +118,8 @@ function setOrbState(state) {
 }
 window.setOrbState = setOrbState;
 
-// TEMPORARY TEST: cycles through the states every 4 seconds.
-// We remove this in Task 3.5 when real events control the sphere.
-const states = ["idle", "listening", "thinking", "speaking"];
-let i = 0;
-setInterval(() => {
-  i = (i + 1) % states.length;
-  setOrbState(states[i]);
-}, 4000);
+// Real events from main.js now control the sphere.
+window.jarvis.onOrbState(setOrbState);
 
 // Click to open the dashboard, drag to move the sphere.
 let pressing = false;

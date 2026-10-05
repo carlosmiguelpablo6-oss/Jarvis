@@ -1,6 +1,7 @@
 const { app, BrowserWindow, screen, ipcMain } = require("electron");
 const path = require("path");
 
+const BACKEND = "http://127.0.0.1:8000";
 const SPHERE_SIZE = 140;
 let sphereWindow = null;
 let dashboardWindow = null;
@@ -37,14 +38,15 @@ function createDashboardWindow() {
     title: "Jarvis Dashboard",
     backgroundColor: "#0b1220",
     show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+    },
   });
 
   dashboardWindow.setMenuBarVisibility(false);
   dashboardWindow.loadFile("dashboard.html");
   dashboardWindow.once("ready-to-show", () => dashboardWindow.show());
 
-  // Closing the dashboard hides it instead of destroying it,
-  // so it reopens instantly and keeps its state.
   dashboardWindow.on("close", (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -63,6 +65,12 @@ function openDashboard() {
   dashboardWindow.focus();
 }
 
+function setOrb(state) {
+  if (sphereWindow && !sphereWindow.isDestroyed()) {
+    sphereWindow.webContents.send("orb:state", state);
+  }
+}
+
 ipcMain.on("dashboard:open", openDashboard);
 
 ipcMain.handle("sphere:get-position", () => sphereWindow.getPosition());
@@ -75,6 +83,34 @@ ipcMain.on("sphere:move", (_event, x, y) => {
       width: SPHERE_SIZE,
       height: SPHERE_SIZE,
     });
+  }
+});
+
+ipcMain.handle("chat:send", async (_event, message) => {
+  setOrb("thinking");
+  try {
+    const res = await fetch(`${BACKEND}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const data = await res.json();
+    setOrb("speaking");
+    setTimeout(() => setOrb("idle"), 2000);
+    return { ok: true, reply: data.reply };
+  } catch (err) {
+    setOrb("idle");
+    return { ok: false, error: "Can't reach the Jarvis server. Is it running?" };
+  }
+});
+
+ipcMain.handle("chat:history", async () => {
+  try {
+    const res = await fetch(`${BACKEND}/history`);
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
   }
 });
 
