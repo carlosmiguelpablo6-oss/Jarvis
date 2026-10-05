@@ -1,11 +1,57 @@
 const { app, BrowserWindow, screen, ipcMain } = require("electron");
+
+const { Tray, Menu, nativeImage } = require("electron");
+const { spawn, execSync} = require("child_process");
 const path = require("path");
+const fs = require("fs");
 
 const BACKEND = "http://127.0.0.1:8000";
 const SPHERE_SIZE = 140;
 let sphereWindow = null;
 let dashboardWindow = null;
 let isQuitting = false;
+
+let backendProcess = null;
+let tray = null;
+
+function startBackend() {
+  const backendDir = path.join(__dirname, "..", "backend");
+  const python = path.join(backendDir, ".venv", "Scripts", "python.exe");
+  const logDir = path.join(__dirname, "..", "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const log = fs.openSync(path.join(logDir, "backend.log"), "a");
+
+  backendProcess = spawn(
+    python,
+    ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000"],
+    { cwd: backendDir, windowsHide: true, stdio: ["ignore", log, log] }
+  );
+  backendProcess.on("exit", () => {
+    backendProcess = null;
+  });
+}
+
+function stopBackend() {
+  if (!backendProcess) return;
+  try {
+    // /T kills the whole process tree, /F forces it.
+    execSync(`taskkill /pid ${backendProcess.pid} /T /F`, { stdio: "ignore" });
+  } catch {}
+  backendProcess = null;
+}
+
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "icon.png")));
+  tray.setToolTip("Jarvis");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Open Dashboard", click: () => openDashboard() },
+      { type: "separator" },
+      { label: "Quit Jarvis", click: () => app.quit() },
+    ])
+  );
+  tray.on("click", () => openDashboard());
+}
 
 function createSphereWindow() {
   const { workArea } = screen.getPrimaryDisplay();
@@ -116,9 +162,22 @@ ipcMain.handle("chat:history", async () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  stopBackend();
 });
 
-app.whenReady().then(createSphereWindow);
+const gotLock = app.requestSingleInstanceLock();
+
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => openDashboard());
+
+  app.whenReady().then(() => {
+    startBackend();
+    createSphereWindow();
+    createTray();
+  });
+}
 
 app.on("window-all-closed", () => {
   app.quit();
