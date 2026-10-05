@@ -2,6 +2,8 @@ import ollama
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from database import add_message, get_recent_messages, init_db
+
 MODEL = "qwen2.5:7b"
 
 SYSTEM_PROMPT = (
@@ -12,7 +14,7 @@ SYSTEM_PROMPT = (
 
 app = FastAPI(title="Jarvis")
 
-history = [{"role": "system", "content": SYSTEM_PROMPT}]
+init_db()
 
 
 class ChatRequest(BaseModel):
@@ -28,10 +30,16 @@ def health():
     return {"status": "Jarvis is online"}
 
 
+@app.get("/history")
+def history():
+    return get_recent_messages(50)
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    history.append({"role": "user", "content": req.message})
-    response = ollama.chat(model=MODEL, messages=history)
+    add_message("user", req.message)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + get_recent_messages(20)
+    response = ollama.chat(model=MODEL, messages=messages)
     reply = response.message.content
-    history.append({"role": "assistant", "content": reply})
+    add_message("assistant", reply)
     return ChatResponse(reply=reply)
