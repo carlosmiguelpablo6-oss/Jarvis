@@ -1,15 +1,28 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, screen } = require("electron");
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 600,
-    height: 400,
-    title: "Jarvis",
+const SPHERE_SIZE = 140;
+let sphereWindow = null;
+
+function createSphereWindow() {
+  const { workArea } = screen.getPrimaryDisplay();
+
+  sphereWindow = new BrowserWindow({
+    width: SPHERE_SIZE,
+    height: SPHERE_SIZE,
+    x: workArea.x + workArea.width - SPHERE_SIZE - 24,
+    y: workArea.y + workArea.height - SPHERE_SIZE - 24,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    hasShadow: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
   });
-  win.loadFile("index.html");
+
+  sphereWindow.loadFile("sphere.html");
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(createSphereWindow);
 
 app.on("window-all-closed", () => {
   app.quit();

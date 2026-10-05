@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Jarvis Sphere</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        user-select: none;
+      }
+      body {
+        display: grid;
+        place-items: center;
+      }
+      .sphere {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle at 30% 30%,
+          #b8f0ff,
+          #2b8cff 45%,
+          #0a2a66 100%
+        );
+        box-shadow: 0 0 24px rgba(80, 170, 255, 0.8);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sphere"></div>
+  </body>
+</html>
