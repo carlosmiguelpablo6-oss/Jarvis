@@ -111,20 +111,53 @@
 
     <script>
       const orb = document.getElementById("orb");
+orb.style.cursor = "pointer";
 
-      function setOrbState(state) {
-        orb.dataset.state = state;
-      }
-      window.setOrbState = setOrbState;
+function setOrbState(state) {
+  orb.dataset.state = state;
+}
+window.setOrbState = setOrbState;
 
-      // TEMPORARY TEST: cycles through the states every 4 seconds.
-      // We remove this in Task 3.5 when real events control the sphere.
-      const states = ["idle", "listening", "thinking", "speaking"];
-      let i = 0;
-      setInterval(() => {
-        i = (i + 1) % states.length;
-        setOrbState(states[i]);
-      }, 4000);
+// TEMPORARY TEST: cycles through the states every 4 seconds.
+// We remove this in Task 3.5 when real events control the sphere.
+const states = ["idle", "listening", "thinking", "speaking"];
+let i = 0;
+setInterval(() => {
+  i = (i + 1) % states.length;
+  setOrbState(states[i]);
+}, 4000);
+
+// Click to open the dashboard, drag to move the sphere.
+let pressing = false;
+let moved = false;
+let startMouse = null;
+let startPos = null;
+
+orb.addEventListener("pointerdown", async (e) => {
+  if (e.button !== 0) return;
+  pressing = true;
+  moved = false;
+  startPos = null;
+  startMouse = { x: e.screenX, y: e.screenY };
+  orb.setPointerCapture(e.pointerId);
+  const [x, y] = await window.jarvis.getSpherePosition();
+  startPos = { x, y };
+});
+
+orb.addEventListener("pointermove", (e) => {
+  if (!pressing || !startPos) return;
+  const dx = e.screenX - startMouse.x;
+  const dy = e.screenY - startMouse.y;
+  if (!moved && Math.hypot(dx, dy) < 5) return;
+  moved = true;
+  window.jarvis.moveSphere(startPos.x + dx, startPos.y + dy);
+});
+
+orb.addEventListener("pointerup", () => {
+  if (!pressing) return;
+  pressing = false;
+  if (!moved) window.jarvis.openDashboard();
+});
     </script>
   </body>
 </html>
