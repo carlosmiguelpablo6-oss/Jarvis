@@ -11,4 +11,9 @@ contextBridge.exposeInMainWorld("jarvis", {
   // chat
   sendChat: (message) => ipcRenderer.invoke("chat:send", message),
   getHistory: () => ipcRenderer.invoke("chat:history"),
+  
+  // memory
+  listFacts: () => ipcRenderer.invoke("facts:list"),
+  addFact: (fact) => ipcRenderer.invoke("facts:add", fact),
+  deleteFact: (id) => ipcRenderer.invoke("facts:delete", id),
 });

@@ -160,6 +160,39 @@ ipcMain.handle("chat:history", async () => {
   }
 });
 
+ipcMain.handle("facts:list", async () => {
+  try {
+    const res = await fetch(`${BACKEND}/facts`);
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle("facts:add", async (_event, fact) => {
+  if (typeof fact !== "string" || !fact.trim()) return false;
+  try {
+    const res = await fetch(`${BACKEND}/facts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fact }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("facts:delete", async (_event, id) => {
+  if (!Number.isInteger(id)) return false;
+  try {
+    const res = await fetch(`${BACKEND}/facts/${id}`, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
 app.on("before-quit", () => {
   isQuitting = true;
   stopBackend();
