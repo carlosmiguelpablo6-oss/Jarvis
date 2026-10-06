@@ -1,3 +1,5 @@
+import json
+
 import ollama
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -16,24 +18,85 @@ MODEL = "qwen2.5:7b"
 SYSTEM_PROMPT = (
     "You are Jarvis, a personal AI assistant running on the user's own laptop. "
     "Be concise, helpful, and calm. Address the user politely. "
-    "If you don't know something, say so instead of guessing."
+    "If you don't know something, say so instead of guessing. "
+    "Long-term memory is handled automatically by the system. "
+    "Only say you have remembered or saved something if a note below says you just saved it."
 )
+
+FACT_EXTRACTION_PROMPT = """Extract long-term facts about the user from the message.
+
+A long-term fact is something lasting about the user: their name, age, job, location, preferences (favorite things), routines, important people, or goals.
+Write each fact as one short sentence starting with "The user".
+Do NOT extract questions, requests, small talk, or temporary things.
+Never include passwords, API keys, or card or ID numbers.
+Reply with JSON only.
+
+Examples:
+
+Message: My name is Maria and I work as a nurse.
+{"facts": ["The user's name is Maria.", "The user works as a nurse."]}
+
+Message: I love hiking on weekends.
+{"facts": ["The user loves hiking on weekends."]}
+
+Message: What is 12 times 12?
+{"facts": []}
+
+Message: Can you open the dashboard for me?
+{"facts": []}
+"""
+
+FACT_SCHEMA = {
+    "type": "object",
+    "properties": {"facts": {"type": "array", "items": {"type": "string"}}},
+    "required": ["facts"],
+}
 
 app = FastAPI(title="Jarvis")
 
 init_db()
 
-def build_system_prompt():
+
+def extract_facts(user_message):
+    try:
+        response = ollama.chat(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": FACT_EXTRACTION_PROMPT},
+                {"role": "user", "content": f"Message: {user_message}"},
+            ],
+            format=FACT_SCHEMA,
+            options={"temperature": 0},
+        )
+        data = json.loads(response.message.content)
+        return [f.strip() for f in data.get("facts", []) if isinstance(f, str) and f.strip()]
+    except Exception as err:
+        print("Fact extraction failed:", err, flush=True)
+        return []
+
+
+def build_system_prompt(new_facts=None):
+    prompt = SYSTEM_PROMPT
+
     facts = list_facts()
-    if not facts:
-        return SYSTEM_PROMPT
-    lines = "\n".join(f"- {f['fact']}" for f in facts)
-    return (
-        SYSTEM_PROMPT
-        + "\n\nThings you know about the user (long-term memory). "
-        + "Use them naturally when relevant, and never mention that you were given a list:\n"
-        + lines
-    )
+    if facts:
+        lines = "\n".join(f"- {f['fact']}" for f in facts)
+        prompt += (
+            "\n\nThings you know about the user (long-term memory). "
+            "Use them naturally when relevant, and never mention that you were given a list:\n"
+            + lines
+        )
+
+    if new_facts:
+        saved = "\n".join(f"- {f}" for f in new_facts)
+        prompt += (
+            "\n\nYou just saved these new facts to long-term memory "
+            "from the user's latest message. Confirm briefly and naturally:\n"
+            + saved
+        )
+
+    return prompt
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -41,6 +104,10 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+
+class FactRequest(BaseModel):
+    fact: str
 
 
 @app.get("/health")
@@ -51,9 +118,6 @@ def health():
 @app.get("/history")
 def history():
     return get_recent_messages(50)
-
-class FactRequest(BaseModel):
-    fact: str
 
 
 @app.get("/facts")
@@ -79,8 +143,14 @@ def remove_fact(fact_id: int):
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     add_message("user", req.message)
-    messages = [{"role": "system", "content": build_system_prompt()}] + get_recent_messages(20)
+
+    new_facts = [f for f in extract_facts(req.message) if add_fact(f)]
+
+    messages = [
+        {"role": "system", "content": build_system_prompt(new_facts)}
+    ] + get_recent_messages(20)
+
     response = ollama.chat(model=MODEL, messages=messages)
-    reply = response.message.content
+    reply = response.message.content or "Done."
     add_message("assistant", reply)
     return ChatResponse(reply=reply)
