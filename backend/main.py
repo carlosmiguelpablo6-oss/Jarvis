@@ -7,10 +7,14 @@ from pydantic import BaseModel
 from database import (
     add_fact,
     add_message,
+    add_task,
     delete_fact,
+    delete_task,
     get_recent_messages,
     init_db,
     list_facts,
+    list_tasks,
+    set_task_done,
 )
 from backup import backup_database
 
@@ -144,6 +148,40 @@ def remove_fact(fact_id: int):
     if not delete_fact(fact_id):
         raise HTTPException(status_code=404, detail="Fact not found")
     return {"deleted": fact_id}
+
+class TaskRequest(BaseModel):
+    title: str
+
+
+class TaskUpdate(BaseModel):
+    done: bool
+
+
+@app.get("/tasks")
+def get_tasks(include_done: bool = False):
+    return list_tasks(include_done)
+
+
+@app.post("/tasks")
+def create_task(req: TaskRequest):
+    task_id = add_task(req.title)
+    if task_id is None:
+        raise HTTPException(status_code=400, detail="Empty task")
+    return {"id": task_id, "title": req.title.strip(), "done": False}
+
+
+@app.patch("/tasks/{task_id}")
+def update_task(task_id: int, req: TaskUpdate):
+    if not set_task_done(task_id, req.done):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"id": task_id, "done": req.done}
+
+
+@app.delete("/tasks/{task_id}")
+def remove_task(task_id: int):
+    if not delete_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"deleted": task_id}
 
 
 @app.post("/chat", response_model=ChatResponse)
