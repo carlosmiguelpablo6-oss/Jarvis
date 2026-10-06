@@ -12,6 +12,7 @@ from database import (
     init_db,
     list_facts,
 )
+from backup import backup_database
 
 MODEL = "qwen2.5:7b"
 
@@ -59,6 +60,7 @@ FACT_SCHEMA = {
 app = FastAPI(title="Jarvis")
 
 init_db()
+backup_database()
 
 
 def extract_facts(user_message):
