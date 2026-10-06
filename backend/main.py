@@ -23,6 +23,17 @@ app = FastAPI(title="Jarvis")
 
 init_db()
 
+def build_system_prompt():
+    facts = list_facts()
+    if not facts:
+        return SYSTEM_PROMPT
+    lines = "\n".join(f"- {f['fact']}" for f in facts)
+    return (
+        SYSTEM_PROMPT
+        + "\n\nThings you know about the user (long-term memory). "
+        + "Use them naturally when relevant, and never mention that you were given a list:\n"
+        + lines
+    )
 
 class ChatRequest(BaseModel):
     message: str
@@ -68,7 +79,7 @@ def remove_fact(fact_id: int):
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     add_message("user", req.message)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + get_recent_messages(20)
+    messages = [{"role": "system", "content": build_system_prompt()}] + get_recent_messages(20)
     response = ollama.chat(model=MODEL, messages=messages)
     reply = response.message.content
     add_message("assistant", reply)
