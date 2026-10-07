@@ -44,6 +44,15 @@ def init_db():
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
 def add_message(role, content):
     with closing(get_connection()) as conn:
@@ -125,4 +134,32 @@ def delete_task(task_id):
     with closing(get_connection()) as conn:
         with conn:
             cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            return cur.rowcount > 0
+
+def add_note(content):
+    content = content.strip()
+    if not content:
+        return None
+    with closing(get_connection()) as conn:
+        with conn:
+            cur = conn.execute("INSERT INTO notes (content) VALUES (?)", (content,))
+            return cur.lastrowid
+
+
+def list_notes(limit=50):
+    with closing(get_connection()) as conn:
+        rows = conn.execute(
+            "SELECT id, content, created_at FROM notes ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [
+        {"id": r["id"], "content": r["content"], "created_at": r["created_at"]}
+        for r in rows
+    ]
+
+
+def delete_note(note_id):
+    with closing(get_connection()) as conn:
+        with conn:
+            cur = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
             return cur.rowcount > 0
