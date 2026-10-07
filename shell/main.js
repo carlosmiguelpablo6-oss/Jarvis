@@ -1,7 +1,14 @@
-const { app, BrowserWindow, screen, ipcMain } = require("electron");
-
-const { Tray, Menu, nativeImage } = require("electron");
-const { spawn, execSync} = require("child_process");
+const {
+  app,
+  BrowserWindow,
+  screen,
+  ipcMain,
+  Tray,
+  Menu,
+  Notification,
+  nativeImage,
+} = require("electron");
+const { spawn, execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
@@ -10,9 +17,12 @@ const SPHERE_SIZE = 140;
 let sphereWindow = null;
 let dashboardWindow = null;
 let isQuitting = false;
-
 let backendProcess = null;
 let tray = null;
+let reminderTimer = null;
+
+// Lets Windows show notifications while Jarvis runs from `npm start` or a shortcut.
+app.setAppUserModelId(process.execPath);
 
 function startBackend() {
   const backendDir = path.join(__dirname, "..", "backend");
@@ -93,6 +103,8 @@ function createDashboardWindow() {
   dashboardWindow.loadFile("dashboard.html");
   dashboardWindow.once("ready-to-show", () => dashboardWindow.show());
 
+  // Closing the dashboard hides it instead of destroying it,
+  // so it reopens instantly and keeps its state.
   dashboardWindow.on("close", (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -117,6 +129,28 @@ function setOrb(state) {
   }
 }
 
+// ---------- reminders: ask the backend every 30 seconds what is due ----------
+async function checkReminders() {
+  try {
+    const res = await fetch(`${BACKEND}/reminders/claim`, { method: "POST" });
+    if (!res.ok) return;
+    const due = await res.json();
+    for (const reminder of due) {
+      const note = new Notification({
+        title: "Jarvis reminder",
+        body: reminder.text,
+      });
+      note.on("click", () => openDashboard());
+      note.show();
+      setOrb("speaking");
+      setTimeout(() => setOrb("idle"), 5000);
+    }
+  } catch {
+    // The backend may still be starting. Try again on the next tick.
+  }
+}
+
+// ---------- window and chat messages from the pages ----------
 ipcMain.on("dashboard:open", openDashboard);
 
 ipcMain.handle("sphere:get-position", () => sphereWindow.getPosition());
@@ -160,6 +194,7 @@ ipcMain.handle("chat:history", async () => {
   }
 });
 
+// ---------- memory (facts) ----------
 ipcMain.handle("facts:list", async () => {
   try {
     const res = await fetch(`${BACKEND}/facts`);
@@ -193,6 +228,7 @@ ipcMain.handle("facts:delete", async (_event, id) => {
   }
 });
 
+// ---------- tasks ----------
 ipcMain.handle("tasks:list", async () => {
   try {
     const res = await fetch(`${BACKEND}/tasks?include_done=true`);
@@ -240,8 +276,10 @@ ipcMain.handle("tasks:delete", async (_event, id) => {
   }
 });
 
+// ---------- app lifecycle ----------
 app.on("before-quit", () => {
   isQuitting = true;
+  if (reminderTimer) clearInterval(reminderTimer);
   stopBackend();
 });
 
@@ -256,6 +294,8 @@ if (!gotLock) {
     startBackend();
     createSphereWindow();
     createTray();
+    reminderTimer = setInterval(checkReminders, 30000);
+    setTimeout(checkReminders, 15000);
   });
 }
 

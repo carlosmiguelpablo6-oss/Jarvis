@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -5,18 +7,24 @@ from assistant import handle_message
 from backup import backup_database
 from database import (
     add_fact,
+    add_message,
     add_note,
+    add_reminder,
     add_task,
+    claim_due_reminders,
     delete_fact,
     delete_note,
+    delete_reminder,
     delete_task,
     get_recent_messages,
     init_db,
     list_facts,
     list_notes,
+    list_reminders,
     list_tasks,
     set_task_done,
 )
+from reminders import parse_when
 
 app = FastAPI(title="Jarvis")
 
@@ -46,6 +54,11 @@ class TaskUpdate(BaseModel):
 
 class NoteRequest(BaseModel):
     content: str
+
+
+class ReminderRequest(BaseModel):
+    text: str
+    when: str
 
 
 @app.get("/health")
@@ -123,6 +136,41 @@ def remove_note(note_id: int):
     if not delete_note(note_id):
         raise HTTPException(status_code=404, detail="Note not found")
     return {"deleted": note_id}
+
+
+@app.get("/reminders")
+def get_reminders():
+    return list_reminders(50)
+
+
+@app.post("/reminders")
+def create_reminder_endpoint(req: ReminderRequest):
+    due, error = parse_when(req.when)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    due_at = due.strftime("%Y-%m-%d %H:%M")
+    reminder_id = add_reminder(req.text, due_at)
+    if reminder_id is None:
+        raise HTTPException(status_code=400, detail="Empty reminder")
+    return {"id": reminder_id, "text": req.text.strip(), "due_at": due_at}
+
+
+@app.delete("/reminders/{reminder_id}")
+def remove_reminder(reminder_id: int):
+    if not delete_reminder(reminder_id):
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return {"deleted": reminder_id}
+
+
+@app.post("/reminders/claim")
+def claim_reminders():
+    """Called by the desktop app every 30 seconds. Returns reminders that are due
+    (including ones missed while the laptop was off) and marks them as fired."""
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M")
+    due = claim_due_reminders(now_text)
+    for r in due:
+        add_message("assistant", f"Reminder: {r['text']}")
+    return due
 
 
 @app.post("/chat", response_model=ChatResponse)

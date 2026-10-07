@@ -1,5 +1,7 @@
 import json
 import random
+import re
+from datetime import datetime
 
 import ollama
 
@@ -7,13 +9,16 @@ from database import (
     add_fact,
     add_message,
     add_note,
+    add_reminder,
     add_task,
     get_recent_messages,
     list_facts,
     list_notes,
+    list_reminders,
     list_tasks,
     set_task_done,
 )
+from reminders import format_due, parse_when
 
 MODEL = "qwen2.5:7b"
 
@@ -26,7 +31,8 @@ SYSTEM_PROMPT = (
     "preferences, history, relationships, or personal life, answer only from your "
     "long-term memory notes or this conversation. If the answer is not there, say you "
     "don't know yet and invite them to tell you. "
-    "Long-term memory, the task list, and notes are managed automatically by the system. "
+    "Long-term memory, the task list, notes, and reminders are managed automatically "
+    "by the system. "
     "Only say you remembered, saved, added, or completed something if a note below "
     "says you just did it. If the user asks you to add or complete a task and no note "
     "says it was done, say it was not done and ask them to rephrase, for example: "
@@ -34,126 +40,133 @@ SYSTEM_PROMPT = (
     "If the user asks you to save a note and no note below says it was saved, say it "
     "was not saved and ask them to rephrase, for example: Take a note: the meeting "
     "moved to Thursday. "
+    "You cannot set reminders yourself. If the user asks to be reminded and no note "
+    "below says it was set, say it was not set and ask them to rephrase, for example: "
+    "Remind me to call mom tomorrow at 7 am. "
     "Never ask the user whether to add a task or a note. The system does that itself."
 )
 
-ANALYSIS_PROMPT = """You read one message from the user and return JSON with these fields:
+ANALYSIS_INSTRUCTIONS = """You read one message from the user and return JSON with these fields:
 - facts: lasting facts about the user (name, age, job, location, preferences, routines, important people, goals). One short sentence each, starting with "The user". Ignore questions, requests, small talk, and temporary things. Never include passwords, API keys, or card or ID numbers.
 - action, one of:
   "add_task": the user clearly asks to add something to their task or to-do list (for example "add a task to..." or "put ... on my to-do list").
-  "suggest_task": the user says they need to, have to, or ought to do something concrete (buy, check, call, finish...) but does NOT ask to add it to a list.
+  "suggest_task": the user says they need to, have to, or ought to do something concrete (buy, check, call, finish...) but does NOT ask to add it to a list or to be reminded.
   "complete_task": the user says a task on the open task list is finished, or asks to mark it done.
   "list_tasks": the user asks to see, show, or list their tasks or to-do list.
   "add_note": the user clearly asks to save a note (for example "take a note...", "note that...", "jot down...").
   "list_notes": the user asks to see, show, or list their notes.
-  "confirm_pending": the pending question is not "none" and the user agrees to it.
-  "decline_pending": the pending question is not "none" and the user says no.
+  "add_reminder": the user asks to be reminded of something (for example "remind me to...").
+  "list_reminders": the user asks to see, show, or list their reminders.
+  "confirm_pending": the pending question asks whether to add a task, and the user agrees.
+  "give_reminder_time": the pending question asks when to remind the user, and the user gives a time. Put the time in when_text, written clearly (for example "4 pm" or "tomorrow at 8 am").
+  "decline_pending": the pending question is not "none" and the user says no, never mind, or cancels.
   "none": anything else.
 - task_title: for add_task or suggest_task, a short title for the task. Keep any time phrase (for example "by Friday"). Otherwise an empty string.
 - task_id: for complete_task, the id of the matching task from the open task list. Otherwise 0.
 - note_text: for add_note, the note as one clear sentence. Otherwise an empty string.
-Reply with JSON only.
+- reminder_text: for add_reminder, what to be reminded of, short, starting with a verb (for example "Call mom"). Otherwise an empty string.
+- when_text: for add_reminder, the time phrase exactly as the user said it (for example "tomorrow at 7 am" or "in 10 minutes"). Empty if the user gave no time. Otherwise an empty string.
+Reply with JSON only."""
 
-Examples:
+BLANK_RESULT = {
+    "facts": [],
+    "action": "none",
+    "task_title": "",
+    "task_id": 0,
+    "note_text": "",
+    "reminder_text": "",
+    "when_text": "",
+}
 
-Open tasks:
-none
-Pending question: none
-Message: My name is Maria and I work as a nurse.
-{"facts": ["The user's name is Maria.", "The user works as a nurse."], "action": "none", "task_title": "", "task_id": 0, "note_text": ""}
 
-Open tasks:
-none
-Pending question: none
-Message: Add a task to buy rice.
-{"facts": [], "action": "add_task", "task_title": "Buy rice", "task_id": 0, "note_text": ""}
+def _example(message, tasks="none", pending="none", **fields):
+    result = dict(BLANK_RESULT, **fields)
+    return (
+        f"Open tasks:\n{tasks}\nPending question: {pending}\n"
+        f"Message: {message}\n{json.dumps(result)}"
+    )
 
-Open tasks:
-none
-Pending question: none
-Message: Please put "call the bank" on my to-do list.
-{"facts": [], "action": "add_task", "task_title": "Call the bank", "task_id": 0, "note_text": ""}
 
-Open tasks:
-3: Buy rice
-4: Call the bank
-Pending question: none
-Message: What are my tasks?
-{"facts": [], "action": "list_tasks", "task_title": "", "task_id": 0, "note_text": ""}
+_COOKIE = 'Should I add the task "Buy a cookie"?'
+_TRASH = 'When should I remind the user about "Take out the trash"?'
+_OPEN = "3: Buy rice\n4: Call the bank"
 
-Open tasks:
-3: Buy rice
-4: Call the bank
-Pending question: none
-Message: I finished calling the bank.
-{"facts": [], "action": "complete_task", "task_title": "", "task_id": 4, "note_text": ""}
+EXAMPLES = [
+    _example(
+        "My name is Maria and I work as a nurse.",
+        facts=["The user's name is Maria.", "The user works as a nurse."],
+    ),
+    _example("Add a task to buy rice.", action="add_task", task_title="Buy rice"),
+    _example(
+        'Please put "call the bank" on my to-do list.',
+        action="add_task",
+        task_title="Call the bank",
+    ),
+    _example("What are my tasks?", tasks=_OPEN, action="list_tasks"),
+    _example(
+        "I finished calling the bank.", tasks=_OPEN, action="complete_task", task_id=4
+    ),
+    _example("What is 12 times 12?"),
+    _example(
+        "I need to buy a cookie.", action="suggest_task", task_title="Buy a cookie"
+    ),
+    _example(
+        "I need to finish the report by Friday.",
+        action="suggest_task",
+        task_title="Finish the report by Friday",
+    ),
+    _example(
+        "I need to check the fridge.", action="suggest_task", task_title="Check the fridge"
+    ),
+    _example(
+        "I love hiking on weekends.", facts=["The user loves hiking on weekends."]
+    ),
+    _example(
+        "Take a note: the meeting with Ben moved to Thursday.",
+        action="add_note",
+        note_text="The meeting with Ben moved to Thursday.",
+    ),
+    _example(
+        "Jot down that the printer is out of ink.",
+        action="add_note",
+        note_text="The printer is out of ink.",
+    ),
+    _example("Show me my notes.", action="list_notes"),
+    _example(
+        "Remind me to call mom tomorrow at 7 am.",
+        action="add_reminder",
+        reminder_text="Call mom",
+        when_text="tomorrow at 7 am",
+    ),
+    _example(
+        "Remind me in 10 minutes to check the oven.",
+        action="add_reminder",
+        reminder_text="Check the oven",
+        when_text="in 10 minutes",
+    ),
+    _example(
+        "Remind me to take out the trash.",
+        action="add_reminder",
+        reminder_text="Take out the trash",
+    ),
+    _example("What are my reminders?", action="list_reminders"),
+    _example("Yes please.", pending=_COOKIE, action="confirm_pending"),
+    _example("No, never mind.", pending=_COOKIE, action="decline_pending"),
+    _example("What is 12 times 12?", pending=_COOKIE),
+    _example(
+        "Around 4pm.", pending=_TRASH, action="give_reminder_time", when_text="4 pm"
+    ),
+    _example(
+        "Tomorrow morning at 8.",
+        pending=_TRASH,
+        action="give_reminder_time",
+        when_text="tomorrow at 8 am",
+    ),
+    _example("Never mind.", pending=_TRASH, action="decline_pending"),
+    _example("What is 12 times 12?", pending=_TRASH),
+]
 
-Open tasks:
-none
-Pending question: none
-Message: What is 12 times 12?
-{"facts": [], "action": "none", "task_title": "", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: none
-Message: I need to buy a cookie.
-{"facts": [], "action": "suggest_task", "task_title": "Buy a cookie", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: none
-Message: I need to finish the report by Friday.
-{"facts": [], "action": "suggest_task", "task_title": "Finish the report by Friday", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: none
-Message: I need to check the fridge.
-{"facts": [], "action": "suggest_task", "task_title": "Check the fridge", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: none
-Message: I love hiking on weekends.
-{"facts": ["The user loves hiking on weekends."], "action": "none", "task_title": "", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: none
-Message: Take a note: the meeting with Ben moved to Thursday.
-{"facts": [], "action": "add_note", "task_title": "", "task_id": 0, "note_text": "The meeting with Ben moved to Thursday."}
-
-Open tasks:
-none
-Pending question: none
-Message: Jot down that the printer is out of ink.
-{"facts": [], "action": "add_note", "task_title": "", "task_id": 0, "note_text": "The printer is out of ink."}
-
-Open tasks:
-none
-Pending question: none
-Message: Show me my notes.
-{"facts": [], "action": "list_notes", "task_title": "", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: Should I add the task "Buy a cookie"?
-Message: Yes please.
-{"facts": [], "action": "confirm_pending", "task_title": "", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: Should I add the task "Buy a cookie"?
-Message: No, never mind.
-{"facts": [], "action": "decline_pending", "task_title": "", "task_id": 0, "note_text": ""}
-
-Open tasks:
-none
-Pending question: Should I add the task "Buy a cookie"?
-Message: What is 12 times 12?
-{"facts": [], "action": "none", "task_title": "", "task_id": 0, "note_text": ""}
-"""
+ANALYSIS_PROMPT = ANALYSIS_INSTRUCTIONS + "\n\nExamples:\n\n" + "\n\n".join(EXAMPLES)
 
 VALID_ACTIONS = (
     "none",
@@ -163,7 +176,10 @@ VALID_ACTIONS = (
     "list_tasks",
     "add_note",
     "list_notes",
+    "add_reminder",
+    "list_reminders",
     "confirm_pending",
+    "give_reminder_time",
     "decline_pending",
 )
 
@@ -175,16 +191,10 @@ ANALYSIS_SCHEMA = {
         "task_title": {"type": "string"},
         "task_id": {"type": "integer"},
         "note_text": {"type": "string"},
+        "reminder_text": {"type": "string"},
+        "when_text": {"type": "string"},
     },
-    "required": ["facts", "action", "task_title", "task_id", "note_text"],
-}
-
-EMPTY_ANALYSIS = {
-    "facts": [],
-    "action": "none",
-    "task_title": "",
-    "task_id": 0,
-    "note_text": "",
+    "required": list(BLANK_RESULT.keys()),
 }
 
 SUGGESTION_REPLIES = [
@@ -201,14 +211,34 @@ DECLINE_REPLIES = [
     "No problem, I'll leave it off your list.",
 ]
 
-# A task title waiting for the user's yes or no. It lives for one message only.
-pending_task = None
+# A question waiting for the user's answer, for example
+# {"type": "task", "value": "Buy a cookie"} or {"type": "reminder", "value": "Call mom"}.
+# It lives for one message only.
+pending = None
+
+# Safety net: the model sometimes claims it saved or set something when our code did not.
+FALSE_CLAIM = re.compile(
+    r"\b(i('ll| will| have|'ve| am going to)\s+(remind|set|add|save|remember)\b"
+    r"|(reminder|task|note)\s+(has been|is now|was|is)\s+(set|added|saved|created)\b"
+    r"|(added|saved|set)\b.{0,40}\b(task|note|reminder|to-do)\b)",
+    re.IGNORECASE,
+)
+FALSE_CLAIM_REPLY = (
+    "I haven't saved or set anything from that message. You can say, for example: "
+    "Remind me to call mom tomorrow at 7 am, or Add a task to buy rice, "
+    "or Take a note: the meeting moved to Thursday."
+)
 
 
 def analyze_message(user_message):
     open_tasks = list_tasks()
     tasks_text = "\n".join(f"{t['id']}: {t['title']}" for t in open_tasks) or "none"
-    pending_text = f'Should I add the task "{pending_task}"?' if pending_task else "none"
+    if pending and pending["type"] == "task":
+        pending_text = f'Should I add the task "{pending["value"]}"?'
+    elif pending and pending["type"] == "reminder":
+        pending_text = f'When should I remind the user about "{pending["value"]}"?'
+    else:
+        pending_text = "none"
     try:
         response = ollama.chat(
             model=MODEL,
@@ -229,24 +259,26 @@ def analyze_message(user_message):
         data = json.loads(response.message.content)
     except Exception as err:
         print("Message analysis failed:", err, flush=True)
-        return dict(EMPTY_ANALYSIS)
+        return dict(BLANK_RESULT)
+
+    def text_field(name):
+        value = data.get(name)
+        return value.strip() if isinstance(value, str) else ""
 
     facts = [f.strip() for f in data.get("facts", []) if isinstance(f, str) and f.strip()]
     action = data.get("action")
     if action not in VALID_ACTIONS:
         action = "none"
-    title = data.get("task_title")
-    title = title.strip() if isinstance(title, str) else ""
     task_id = data.get("task_id")
     task_id = task_id if isinstance(task_id, int) else 0
-    note_text = data.get("note_text")
-    note_text = note_text.strip() if isinstance(note_text, str) else ""
     return {
         "facts": facts,
         "action": action,
-        "task_title": title,
+        "task_title": text_field("task_title"),
         "task_id": task_id,
-        "note_text": note_text,
+        "note_text": text_field("note_text"),
+        "reminder_text": text_field("reminder_text"),
+        "when_text": text_field("when_text"),
     }
 
 
@@ -276,6 +308,15 @@ def run_action(analysis):
     return None
 
 
+def set_reminder(text, when):
+    """Try to set a reminder. Returns (reply, ok). The reply is written by code."""
+    due, error = parse_when(when)
+    if error:
+        return error, False
+    add_reminder(text, due.strftime("%Y-%m-%d %H:%M"))
+    return f'Okay, I will remind you about "{text}" on {format_due(due)}.', True
+
+
 def format_task_list(tasks):
     if not tasks:
         return "You have no open tasks."
@@ -288,6 +329,16 @@ def format_note_list(notes):
         return "You have no saved notes."
     lines = "\n".join(f"{i}. {n['content']}" for i, n in enumerate(notes, start=1))
     return "Here are your latest notes, newest first:\n" + lines
+
+
+def format_reminder_list(reminders):
+    if not reminders:
+        return "You have no upcoming reminders."
+    lines = []
+    for i, r in enumerate(reminders, start=1):
+        due = datetime.strptime(r["due_at"], "%Y-%m-%d %H:%M")
+        lines.append(f"{i}. {r['text']} - {format_due(due)}")
+    return "Your upcoming reminders:\n" + "\n".join(lines)
 
 
 def build_system_prompt(new_facts=None, action_note=None):
@@ -327,9 +378,9 @@ def build_system_prompt(new_facts=None, action_note=None):
         )
     else:
         prompt += (
-            "\n\nNo task or note was added or completed during this message. "
-            "Do not say that any task or note was added, updated, or completed. "
-            "If you mention tasks, list only the open tasks given above."
+            "\n\nNo task, note, or reminder was added or completed during this message. "
+            "Do not say that any task, note, or reminder was added, set, updated, or "
+            "completed. If you mention tasks, list only the open tasks given above."
         )
 
     return prompt
@@ -337,7 +388,7 @@ def build_system_prompt(new_facts=None, action_note=None):
 
 def handle_message(user_message):
     """The whole chat flow: analyze, act, reply, and save both sides."""
-    global pending_task
+    global pending
 
     add_message("user", user_message)
 
@@ -345,25 +396,49 @@ def handle_message(user_message):
     action = analysis["action"]
 
     # A pending question lives for one message only: take it, then clear it.
-    previous_pending, pending_task = pending_task, None
+    previous, pending = pending, None
+    previous_type = previous["type"] if previous else None
 
     new_facts = [f for f in analysis["facts"] if add_fact(f)]
     action_note = None
     reply = None
 
     if action == "suggest_task" and analysis["task_title"]:
-        pending_task = analysis["task_title"]
-        reply = random.choice(SUGGESTION_REPLIES).format(title=pending_task)
-    elif action == "confirm_pending" and previous_pending:
-        if add_task(previous_pending):
-            reply = random.choice(CONFIRM_REPLIES).format(title=previous_pending)
-    elif action == "decline_pending" and previous_pending:
+        pending = {"type": "task", "value": analysis["task_title"]}
+        reply = random.choice(SUGGESTION_REPLIES).format(title=analysis["task_title"])
+    elif action == "confirm_pending" and previous_type == "task":
+        if add_task(previous["value"]):
+            reply = random.choice(CONFIRM_REPLIES).format(title=previous["value"])
+    elif action == "decline_pending" and previous:
         reply = random.choice(DECLINE_REPLIES)
+    elif action == "give_reminder_time" and previous_type == "reminder":
+        reply, ok = set_reminder(previous["value"], analysis["when_text"])
+        if not ok:
+            pending = previous  # let the user try the time again
+    elif action == "add_reminder":
+        text = analysis["reminder_text"]
+        if not text:
+            reply = (
+                "What should I remind you about? "
+                "Try: Remind me to call mom tomorrow at 7 am."
+            )
+        elif not analysis["when_text"]:
+            pending = {"type": "reminder", "value": text}
+            reply = (
+                f'When should I remind you about "{text}"? '
+                "For example: tomorrow at 7 am, or in 30 minutes."
+            )
+        else:
+            reply, ok = set_reminder(text, analysis["when_text"])
+            if not ok:
+                pending = {"type": "reminder", "value": text}
     elif action == "list_tasks":
         # Data questions are answered by code, not by the model.
         reply = format_task_list(list_tasks())
     elif action == "list_notes":
         reply = format_note_list(list_notes(10))
+    elif action == "list_reminders":
+        reply = format_reminder_list(list_reminders(10))
     else:
         action_note = run_action(analysis)
 
@@ -377,6 +452,9 @@ def handle_message(user_message):
             options={"temperature": 0.5, "num_predict": 400},
         )
         reply = response.message.content or "Done."
+        # If the model claims it saved or set something but our code did not, correct it.
+        if not (action_note or new_facts) and FALSE_CLAIM.search(reply):
+            reply = FALSE_CLAIM_REPLY
 
     add_message("assistant", reply)
     return reply

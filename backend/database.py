@@ -53,7 +53,20 @@ def init_db():
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reminders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    text TEXT NOT NULL,
+                    due_at TEXT NOT NULL,
+                    done INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
+
+# ---------- messages ----------
 def add_message(role, content):
     with closing(get_connection()) as conn:
         with conn:
@@ -76,6 +89,8 @@ def get_recent_messages(limit=20):
         ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in rows]
 
+
+# ---------- facts ----------
 def add_fact(fact):
     fact = fact.strip()
     if not fact:
@@ -98,6 +113,8 @@ def delete_fact(fact_id):
             cur = conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
             return cur.rowcount > 0
 
+
+# ---------- tasks ----------
 def add_task(title):
     title = title.strip()
     if not title:
@@ -106,6 +123,7 @@ def add_task(title):
         with conn:
             cur = conn.execute("INSERT INTO tasks (title) VALUES (?)", (title,))
             return cur.lastrowid
+
 
 def list_tasks(include_done=False):
     query = "SELECT id, title, done FROM tasks"
@@ -136,6 +154,8 @@ def delete_task(task_id):
             cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             return cur.rowcount > 0
 
+
+# ---------- notes ----------
 def add_note(content):
     content = content.strip()
     if not content:
@@ -162,4 +182,52 @@ def delete_note(note_id):
     with closing(get_connection()) as conn:
         with conn:
             cur = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            return cur.rowcount > 0
+
+
+# ---------- reminders ----------
+# due_at is local time text in the form "YYYY-MM-DD HH:MM", so it sorts correctly.
+def add_reminder(text, due_at):
+    text = text.strip()
+    if not text:
+        return None
+    with closing(get_connection()) as conn:
+        with conn:
+            cur = conn.execute(
+                "INSERT INTO reminders (text, due_at) VALUES (?, ?)", (text, due_at)
+            )
+            return cur.lastrowid
+
+
+def list_reminders(limit=50):
+    """Upcoming reminders that have not fired yet, soonest first."""
+    with closing(get_connection()) as conn:
+        rows = conn.execute(
+            "SELECT id, text, due_at FROM reminders WHERE done = 0 "
+            "ORDER BY due_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [{"id": r["id"], "text": r["text"], "due_at": r["due_at"]} for r in rows]
+
+
+def claim_due_reminders(now_text):
+    """Return reminders that are due and mark them as fired, in one step."""
+    with closing(get_connection()) as conn:
+        with conn:
+            rows = conn.execute(
+                "SELECT id, text, due_at FROM reminders "
+                "WHERE done = 0 AND due_at <= ? ORDER BY due_at ASC",
+                (now_text,),
+            ).fetchall()
+            conn.executemany(
+                "UPDATE reminders SET done = 1 WHERE id = ?",
+                [(r["id"],) for r in rows],
+            )
+    return [{"id": r["id"], "text": r["text"], "due_at": r["due_at"]} for r in rows]
+
+
+def delete_reminder(reminder_id):
+    with closing(get_connection()) as conn:
+        with conn:
+            cur = conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             return cur.rowcount > 0
