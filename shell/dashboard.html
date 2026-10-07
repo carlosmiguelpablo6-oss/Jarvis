@@ -21,6 +21,7 @@
         border-bottom: 1px solid #1c2a44;
       }
       header .title { font-weight: 600; letter-spacing: 2px; }
+      header .tabs { display: flex; gap: 8px; }
       #content { flex: 1; display: flex; min-height: 0; }
       #chat {
         flex: 1;
@@ -70,7 +71,7 @@
         font: inherit;
         max-height: 140px;
       }
-      #input:focus, #factInput:focus { outline: none; border-color: #2b8cff; }
+      #input:focus, .addInput:focus { outline: none; border-color: #2b8cff; }
       button {
         background: #2b8cff;
         color: #fff;
@@ -81,20 +82,23 @@
         cursor: pointer;
       }
       button:disabled { opacity: 0.5; cursor: default; }
-      #memoryBtn { background: #16233d; padding: 6px 14px; font-size: 14px; }
-      #memoryBtn:hover { background: #1c2f52; }
+      .tabBtn { background: #16233d; padding: 6px 14px; font-size: 14px; }
+      .tabBtn:hover { background: #1c2f52; }
+      .tabBtn.on { background: #2b8cff; }
 
-      #memory {
+      #side {
         display: none;
         width: 320px;
         flex-direction: column;
         background: #0e1730;
         border-left: 1px solid #1c2a44;
       }
-      #memory.open { display: flex; }
-      #memory h2 { margin: 0; padding: 16px 16px 4px; font-size: 16px; }
-      #memory .note { padding: 0 16px 12px; font-size: 12px; color: #7f93b5; }
-      #facts {
+      #side.open { display: flex; }
+      .view { display: none; flex: 1; flex-direction: column; min-height: 0; }
+      .view.active { display: flex; }
+      .view h2 { margin: 0; padding: 16px 16px 4px; font-size: 16px; }
+      .view .note { padding: 0 16px 12px; font-size: 12px; color: #7f93b5; }
+      .list {
         flex: 1;
         overflow-y: auto;
         padding: 0 12px;
@@ -102,9 +106,8 @@
         flex-direction: column;
         gap: 8px;
       }
-      .fact {
+      .fact, .task {
         display: flex;
-        justify-content: space-between;
         gap: 10px;
         align-items: flex-start;
         background: #16233d;
@@ -113,7 +116,10 @@
         font-size: 14px;
         line-height: 1.4;
       }
-      .fact span { overflow-wrap: anywhere; }
+      .fact { justify-content: space-between; }
+      .fact span, .task span { overflow-wrap: anywhere; flex: 1; }
+      .task input[type="checkbox"] { margin-top: 3px; cursor: pointer; }
+      .task.done span { text-decoration: line-through; color: #7f93b5; }
       .del {
         background: none;
         color: #7f93b5;
@@ -123,13 +129,20 @@
       }
       .del:hover { color: #ff6b6b; }
       .empty { color: #7f93b5; font-style: italic; padding: 8px 4px; }
-      #addBar {
+      .label {
+        color: #7f93b5;
+        font-size: 12px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        padding: 8px 4px 0;
+      }
+      .addBar {
         display: flex;
         gap: 8px;
         padding: 12px;
         border-top: 1px solid #1c2a44;
       }
-      #factInput {
+      .addInput {
         flex: 1;
         background: #101a2f;
         color: #e6f1ff;
@@ -140,13 +153,16 @@
         font-size: 14px;
         min-width: 0;
       }
-      #addBtn { padding: 0 14px; }
+      .addBtn { padding: 0 14px; }
     </style>
   </head>
   <body>
     <header>
       <span class="title">JARVIS</span>
-      <button id="memoryBtn">Memory</button>
+      <div class="tabs">
+        <button class="tabBtn" id="tasksBtn">Tasks</button>
+        <button class="tabBtn" id="memoryBtn">Memory</button>
+      </div>
     </header>
 
     <div id="content">
@@ -162,14 +178,30 @@
         </div>
       </div>
 
-      <aside id="memory">
-        <h2>What Jarvis remembers</h2>
-        <div class="note">Stored only on this laptop.</div>
-        <div id="facts"></div>
-        <div id="addBar">
-          <input id="factInput" placeholder="Add a fact, e.g. The user lives in Manila." />
-          <button id="addBtn">Add</button>
-        </div>
+      <aside id="side">
+        <section class="view" id="tasksView">
+          <h2>Tasks</h2>
+          <div class="note">Ask Jarvis ("Add a task to...") or add one here.</div>
+          <div class="list" id="taskList"></div>
+          <div class="addBar">
+            <input class="addInput" id="taskInput" placeholder="New task..." />
+            <button class="addBtn" id="taskAddBtn">Add</button>
+          </div>
+        </section>
+
+        <section class="view" id="memoryView">
+          <h2>What Jarvis remembers</h2>
+          <div class="note">Stored only on this laptop.</div>
+          <div class="list" id="facts"></div>
+          <div class="addBar">
+            <input
+              class="addInput"
+              id="factInput"
+              placeholder="Add a fact, e.g. The user lives in Manila."
+            />
+            <button class="addBtn" id="addBtn">Add</button>
+          </div>
+        </section>
       </aside>
     </div>
 
@@ -177,9 +209,18 @@
       const messagesEl = document.getElementById("messages");
       const inputEl = document.getElementById("input");
       const sendBtn = document.getElementById("send");
-      const memoryEl = document.getElementById("memory");
+      const sideEl = document.getElementById("side");
       const factsEl = document.getElementById("facts");
       const factInput = document.getElementById("factInput");
+      const taskListEl = document.getElementById("taskList");
+      const taskInput = document.getElementById("taskInput");
+      const tasksBtn = document.getElementById("tasksBtn");
+      const memoryBtn = document.getElementById("memoryBtn");
+      const views = {
+        tasks: document.getElementById("tasksView"),
+        memory: document.getElementById("memoryView"),
+      };
+      let currentView = null;
 
       function addMessage(role, text) {
         const el = document.createElement("div");
@@ -195,14 +236,99 @@
         sendBtn.disabled = busy;
       }
 
+      function addEmpty(container, text) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = text;
+        container.appendChild(empty);
+      }
+
+      // ---------- side panel ----------
+      function showPanel(name) {
+        if (currentView === name) {
+          currentView = null;
+          sideEl.classList.remove("open");
+        } else {
+          currentView = name;
+          sideEl.classList.add("open");
+        }
+        for (const [key, el] of Object.entries(views)) {
+          el.classList.toggle("active", key === currentView);
+        }
+        tasksBtn.classList.toggle("on", currentView === "tasks");
+        memoryBtn.classList.toggle("on", currentView === "memory");
+        refreshPanel();
+      }
+
+      function refreshPanel() {
+        if (currentView === "tasks") loadTasks();
+        if (currentView === "memory") loadFacts();
+      }
+
+      // ---------- tasks ----------
+      function renderTask(t) {
+        const row = document.createElement("div");
+        row.className = "task" + (t.done ? " done" : "");
+
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = t.done;
+        box.addEventListener("change", async () => {
+          await window.jarvis.setTaskDone(t.id, box.checked);
+          loadTasks();
+        });
+
+        const text = document.createElement("span");
+        text.textContent = t.title;
+
+        const del = document.createElement("button");
+        del.className = "del";
+        del.textContent = "\u00d7";
+        del.title = "Delete this task";
+        del.addEventListener("click", async () => {
+          await window.jarvis.deleteTask(t.id);
+          loadTasks();
+        });
+
+        row.append(box, text, del);
+        return row;
+      }
+
+      async function loadTasks() {
+        const tasks = await window.jarvis.listTasks();
+        taskListEl.textContent = "";
+        const open = tasks.filter((t) => !t.done);
+        const done = tasks.filter((t) => t.done);
+
+        if (open.length === 0) addEmpty(taskListEl, "No open tasks.");
+        for (const t of open) taskListEl.appendChild(renderTask(t));
+
+        if (done.length > 0) {
+          const label = document.createElement("div");
+          label.className = "label";
+          label.textContent = "Done";
+          taskListEl.appendChild(label);
+          for (const t of done) taskListEl.appendChild(renderTask(t));
+        }
+      }
+
+      let addingTask = false;
+      async function addTaskFromInput() {
+        const text = taskInput.value.trim();
+        if (!text || addingTask) return;
+        addingTask = true;
+        await window.jarvis.addTask(text);
+        addingTask = false;
+        taskInput.value = "";
+        loadTasks();
+      }
+
+      // ---------- memory ----------
       async function loadFacts() {
         const facts = await window.jarvis.listFacts();
         factsEl.textContent = "";
         if (facts.length === 0) {
-          const empty = document.createElement("div");
-          empty.className = "empty";
-          empty.textContent = "Nothing remembered yet.";
-          factsEl.appendChild(empty);
+          addEmpty(factsEl, "Nothing remembered yet.");
           return;
         }
         for (const f of facts) {
@@ -223,14 +349,13 @@
         }
       }
 
-      let adding = false;
-
+      let addingFact = false;
       async function addFactFromInput() {
         const text = factInput.value.trim();
-        if (!text || adding) return;
-        adding = true;
+        if (!text || addingFact) return;
+        addingFact = true;
         const ok = await window.jarvis.addFact(text);
-        adding = false;
+        addingFact = false;
         factInput.value = "";
         factInput.placeholder = ok
           ? "Add a fact, e.g. The user lives in Manila."
@@ -238,6 +363,7 @@
         loadFacts();
       }
 
+      // ---------- chat ----------
       async function send() {
         const text = inputEl.value.trim();
         if (!text) return;
@@ -250,7 +376,7 @@
         addMessage("assistant", result.ok ? result.reply : "Error: " + result.error);
         setBusy(false);
         inputEl.focus();
-        if (memoryEl.classList.contains("open")) loadFacts();
+        refreshPanel();
       }
 
       sendBtn.addEventListener("click", send);
@@ -261,9 +387,11 @@
         }
       });
 
-      document.getElementById("memoryBtn").addEventListener("click", () => {
-        memoryEl.classList.toggle("open");
-        if (memoryEl.classList.contains("open")) loadFacts();
+      tasksBtn.addEventListener("click", () => showPanel("tasks"));
+      memoryBtn.addEventListener("click", () => showPanel("memory"));
+      document.getElementById("taskAddBtn").addEventListener("click", addTaskFromInput);
+      taskInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addTaskFromInput();
       });
       document.getElementById("addBtn").addEventListener("click", addFactFromInput);
       factInput.addEventListener("keydown", (e) => {

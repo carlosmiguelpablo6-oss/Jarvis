@@ -193,6 +193,53 @@ ipcMain.handle("facts:delete", async (_event, id) => {
   }
 });
 
+ipcMain.handle("tasks:list", async () => {
+  try {
+    const res = await fetch(`${BACKEND}/tasks?include_done=true`);
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle("tasks:add", async (_event, title) => {
+  if (typeof title !== "string" || !title.trim()) return false;
+  try {
+    const res = await fetch(`${BACKEND}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("tasks:set-done", async (_event, id, done) => {
+  if (!Number.isInteger(id) || typeof done !== "boolean") return false;
+  try {
+    const res = await fetch(`${BACKEND}/tasks/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ done }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("tasks:delete", async (_event, id) => {
+  if (!Number.isInteger(id)) return false;
+  try {
+    const res = await fetch(`${BACKEND}/tasks/${id}`, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
 app.on("before-quit", () => {
   isQuitting = true;
   stopBackend();

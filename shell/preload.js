@@ -16,4 +16,10 @@ contextBridge.exposeInMainWorld("jarvis", {
   listFacts: () => ipcRenderer.invoke("facts:list"),
   addFact: (fact) => ipcRenderer.invoke("facts:add", fact),
   deleteFact: (id) => ipcRenderer.invoke("facts:delete", id),
+
+  // tasks
+  listTasks: () => ipcRenderer.invoke("tasks:list"),
+  addTask: (title) => ipcRenderer.invoke("tasks:add", title),
+  setTaskDone: (id, done) => ipcRenderer.invoke("tasks:set-done", id, done),
+  deleteTask: (id) => ipcRenderer.invoke("tasks:delete", id),
 });
