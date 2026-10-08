@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("jarvis", {
   // chat
   sendChat: (message) => ipcRenderer.invoke("chat:send", message),
   getHistory: () => ipcRenderer.invoke("chat:history"),
-  
+
   // memory
   listFacts: () => ipcRenderer.invoke("facts:list"),
   addFact: (fact) => ipcRenderer.invoke("facts:add", fact),
@@ -22,4 +22,14 @@ contextBridge.exposeInMainWorld("jarvis", {
   addTask: (title) => ipcRenderer.invoke("tasks:add", title),
   setTaskDone: (id, done) => ipcRenderer.invoke("tasks:set-done", id, done),
   deleteTask: (id) => ipcRenderer.invoke("tasks:delete", id),
+
+  // notes
+  listNotes: () => ipcRenderer.invoke("notes:list"),
+  addNote: (content) => ipcRenderer.invoke("notes:add", content),
+  deleteNote: (id) => ipcRenderer.invoke("notes:delete", id),
+
+  // reminders
+  listReminders: () => ipcRenderer.invoke("reminders:list"),
+  addReminder: (text, when) => ipcRenderer.invoke("reminders:add", text, when),
+  deleteReminder: (id) => ipcRenderer.invoke("reminders:delete", id),
 });

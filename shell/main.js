@@ -276,6 +276,85 @@ ipcMain.handle("tasks:delete", async (_event, id) => {
   }
 });
 
+// ---------- notes ----------
+ipcMain.handle("notes:list", async () => {
+  try {
+    const res = await fetch(`${BACKEND}/notes`);
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle("notes:add", async (_event, content) => {
+  if (typeof content !== "string" || !content.trim()) return false;
+  try {
+    const res = await fetch(`${BACKEND}/notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("notes:delete", async (_event, id) => {
+  if (!Number.isInteger(id)) return false;
+  try {
+    const res = await fetch(`${BACKEND}/notes/${id}`, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
+// ---------- reminders ----------
+ipcMain.handle("reminders:list", async () => {
+  try {
+    const res = await fetch(`${BACKEND}/reminders`);
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle("reminders:add", async (_event, text, when) => {
+  if (typeof text !== "string" || !text.trim()) {
+    return { ok: false, error: "Write what to be reminded about." };
+  }
+  if (typeof when !== "string" || !when.trim()) {
+    return { ok: false, error: "Write when, for example: tomorrow at 7 am." };
+  }
+  try {
+    const res = await fetch(`${BACKEND}/reminders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, when }),
+    });
+    if (res.ok) return { ok: true };
+    let error = "Could not add that reminder.";
+    try {
+      const data = await res.json();
+      if (typeof data.detail === "string") error = data.detail;
+    } catch {}
+    return { ok: false, error };
+  } catch {
+    return { ok: false, error: "Can't reach the Jarvis server." };
+  }
+});
+
+ipcMain.handle("reminders:delete", async (_event, id) => {
+  if (!Number.isInteger(id)) return false;
+  try {
+    const res = await fetch(`${BACKEND}/reminders/${id}`, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
 // ---------- app lifecycle ----------
 app.on("before-quit", () => {
   isQuitting = true;

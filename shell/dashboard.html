@@ -19,9 +19,10 @@
         align-items: center;
         padding: 10px 20px;
         border-bottom: 1px solid #1c2a44;
+        gap: 12px;
       }
       header .title { font-weight: 600; letter-spacing: 2px; }
-      header .tabs { display: flex; gap: 8px; }
+      header .tabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
       #content { flex: 1; display: flex; min-height: 0; }
       #chat {
         flex: 1;
@@ -82,13 +83,13 @@
         cursor: pointer;
       }
       button:disabled { opacity: 0.5; cursor: default; }
-      .tabBtn { background: #16233d; padding: 6px 14px; font-size: 14px; }
+      .tabBtn { background: #16233d; padding: 6px 12px; font-size: 14px; }
       .tabBtn:hover { background: #1c2f52; }
       .tabBtn.on { background: #2b8cff; }
 
       #side {
         display: none;
-        width: 320px;
+        width: 330px;
         flex-direction: column;
         background: #0e1730;
         border-left: 1px solid #1c2a44;
@@ -106,7 +107,7 @@
         flex-direction: column;
         gap: 8px;
       }
-      .fact, .task {
+      .fact, .task, .item {
         display: flex;
         gap: 10px;
         align-items: flex-start;
@@ -116,8 +117,9 @@
         font-size: 14px;
         line-height: 1.4;
       }
-      .fact { justify-content: space-between; }
-      .fact span, .task span { overflow-wrap: anywhere; flex: 1; }
+      .fact, .item { justify-content: space-between; }
+      .fact span, .task span, .item .body { overflow-wrap: anywhere; flex: 1; }
+      .item .meta { color: #7f93b5; font-size: 12px; margin-top: 2px; }
       .task input[type="checkbox"] { margin-top: 3px; cursor: pointer; }
       .task.done span { text-decoration: line-through; color: #7f93b5; }
       .del {
@@ -142,6 +144,13 @@
         padding: 12px;
         border-top: 1px solid #1c2a44;
       }
+      .addStack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        border-top: 1px solid #1c2a44;
+      }
       .addInput {
         flex: 1;
         background: #101a2f;
@@ -153,7 +162,8 @@
         font-size: 14px;
         min-width: 0;
       }
-      .addBtn { padding: 0 14px; }
+      .addBtn { padding: 8px 14px; }
+      .formError { color: #ff9b9b; font-size: 12px; min-height: 0; }
     </style>
   </head>
   <body>
@@ -161,6 +171,8 @@
       <span class="title">JARVIS</span>
       <div class="tabs">
         <button class="tabBtn" id="tasksBtn">Tasks</button>
+        <button class="tabBtn" id="notesBtn">Notes</button>
+        <button class="tabBtn" id="remindersBtn">Reminders</button>
         <button class="tabBtn" id="memoryBtn">Memory</button>
       </div>
     </header>
@@ -189,6 +201,32 @@
           </div>
         </section>
 
+        <section class="view" id="notesView">
+          <h2>Notes</h2>
+          <div class="note">Ask Jarvis ("Take a note: ...") or add one here. Newest first.</div>
+          <div class="list" id="noteList"></div>
+          <div class="addBar">
+            <input class="addInput" id="noteInput" placeholder="New note..." />
+            <button class="addBtn" id="noteAddBtn">Add</button>
+          </div>
+        </section>
+
+        <section class="view" id="remindersView">
+          <h2>Reminders</h2>
+          <div class="note">Ask Jarvis ("Remind me to... tomorrow at 7 am") or add one here.</div>
+          <div class="list" id="reminderList"></div>
+          <div class="addStack">
+            <input class="addInput" id="reminderText" placeholder="Remind me to..." />
+            <input
+              class="addInput"
+              id="reminderWhen"
+              placeholder="When? e.g. tomorrow at 7 am, in 30 minutes"
+            />
+            <div class="formError" id="reminderError"></div>
+            <button class="addBtn" id="reminderAddBtn">Add reminder</button>
+          </div>
+        </section>
+
         <section class="view" id="memoryView">
           <h2>What Jarvis remembers</h2>
           <div class="note">Stored only on this laptop.</div>
@@ -206,20 +244,12 @@
     </div>
 
     <script>
-      const messagesEl = document.getElementById("messages");
-      const inputEl = document.getElementById("input");
-      const sendBtn = document.getElementById("send");
-      const sideEl = document.getElementById("side");
-      const factsEl = document.getElementById("facts");
-      const factInput = document.getElementById("factInput");
-      const taskListEl = document.getElementById("taskList");
-      const taskInput = document.getElementById("taskInput");
-      const tasksBtn = document.getElementById("tasksBtn");
-      const memoryBtn = document.getElementById("memoryBtn");
-      const views = {
-        tasks: document.getElementById("tasksView"),
-        memory: document.getElementById("memoryView"),
-      };
+      const $ = (id) => document.getElementById(id);
+      const messagesEl = $("messages");
+      const inputEl = $("input");
+      const sendBtn = $("send");
+      const sideEl = $("side");
+      const VIEWS = ["tasks", "notes", "reminders", "memory"];
       let currentView = null;
 
       function addMessage(role, text) {
@@ -243,29 +273,37 @@
         container.appendChild(empty);
       }
 
+      function deleteButton(title, onDelete) {
+        const del = document.createElement("button");
+        del.className = "del";
+        del.textContent = "\u00d7";
+        del.title = title;
+        del.addEventListener("click", onDelete);
+        return del;
+      }
+
       // ---------- side panel ----------
       function showPanel(name) {
-        if (currentView === name) {
-          currentView = null;
-          sideEl.classList.remove("open");
-        } else {
-          currentView = name;
-          sideEl.classList.add("open");
+        currentView = currentView === name ? null : name;
+        sideEl.classList.toggle("open", currentView !== null);
+        for (const view of VIEWS) {
+          $(view + "View").classList.toggle("active", view === currentView);
+          $(view + "Btn").classList.toggle("on", view === currentView);
         }
-        for (const [key, el] of Object.entries(views)) {
-          el.classList.toggle("active", key === currentView);
-        }
-        tasksBtn.classList.toggle("on", currentView === "tasks");
-        memoryBtn.classList.toggle("on", currentView === "memory");
         refreshPanel();
       }
 
       function refreshPanel() {
         if (currentView === "tasks") loadTasks();
+        if (currentView === "notes") loadNotes();
+        if (currentView === "reminders") loadReminders();
         if (currentView === "memory") loadFacts();
       }
 
       // ---------- tasks ----------
+      const taskListEl = $("taskList");
+      const taskInput = $("taskInput");
+
       function renderTask(t) {
         const row = document.createElement("div");
         row.className = "task" + (t.done ? " done" : "");
@@ -281,16 +319,14 @@
         const text = document.createElement("span");
         text.textContent = t.title;
 
-        const del = document.createElement("button");
-        del.className = "del";
-        del.textContent = "\u00d7";
-        del.title = "Delete this task";
-        del.addEventListener("click", async () => {
-          await window.jarvis.deleteTask(t.id);
-          loadTasks();
-        });
-
-        row.append(box, text, del);
+        row.append(
+          box,
+          text,
+          deleteButton("Delete this task", async () => {
+            await window.jarvis.deleteTask(t.id);
+            loadTasks();
+          })
+        );
         return row;
       }
 
@@ -323,7 +359,117 @@
         loadTasks();
       }
 
+      // ---------- notes ----------
+      const noteListEl = $("noteList");
+      const noteInput = $("noteInput");
+
+      async function loadNotes() {
+        const notes = await window.jarvis.listNotes();
+        noteListEl.textContent = "";
+        if (notes.length === 0) {
+          addEmpty(noteListEl, "No notes yet.");
+          return;
+        }
+        for (const n of notes) {
+          const row = document.createElement("div");
+          row.className = "item";
+          const body = document.createElement("div");
+          body.className = "body";
+          body.textContent = n.content;
+          row.append(
+            body,
+            deleteButton("Delete this note", async () => {
+              await window.jarvis.deleteNote(n.id);
+              loadNotes();
+            })
+          );
+          noteListEl.appendChild(row);
+        }
+      }
+
+      let addingNote = false;
+      async function addNoteFromInput() {
+        const text = noteInput.value.trim();
+        if (!text || addingNote) return;
+        addingNote = true;
+        await window.jarvis.addNote(text);
+        addingNote = false;
+        noteInput.value = "";
+        loadNotes();
+      }
+
+      // ---------- reminders ----------
+      const reminderListEl = $("reminderList");
+      const reminderText = $("reminderText");
+      const reminderWhen = $("reminderWhen");
+      const reminderError = $("reminderError");
+
+      // due_at looks like "2026-10-08 07:00" (local time).
+      function formatDue(dueAt) {
+        const [date, time] = dueAt.split(" ");
+        const [y, mo, d] = date.split("-").map(Number);
+        const [h, mi] = time.split(":").map(Number);
+        return new Date(y, mo - 1, d, h, mi).toLocaleString([], {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+      }
+
+      async function loadReminders() {
+        const reminders = await window.jarvis.listReminders();
+        reminderListEl.textContent = "";
+        if (reminders.length === 0) {
+          addEmpty(reminderListEl, "No upcoming reminders.");
+          return;
+        }
+        for (const r of reminders) {
+          const row = document.createElement("div");
+          row.className = "item";
+          const body = document.createElement("div");
+          body.className = "body";
+          const text = document.createElement("div");
+          text.textContent = r.text;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = formatDue(r.due_at);
+          body.append(text, meta);
+          row.append(
+            body,
+            deleteButton("Delete this reminder", async () => {
+              await window.jarvis.deleteReminder(r.id);
+              loadReminders();
+            })
+          );
+          reminderListEl.appendChild(row);
+        }
+      }
+
+      let addingReminder = false;
+      async function addReminderFromInputs() {
+        if (addingReminder) return;
+        addingReminder = true;
+        const result = await window.jarvis.addReminder(
+          reminderText.value.trim(),
+          reminderWhen.value.trim()
+        );
+        addingReminder = false;
+        if (result.ok) {
+          reminderText.value = "";
+          reminderWhen.value = "";
+          reminderError.textContent = "";
+        } else {
+          reminderError.textContent = result.error;
+        }
+        loadReminders();
+      }
+
       // ---------- memory ----------
+      const factsEl = $("facts");
+      const factInput = $("factInput");
+
       async function loadFacts() {
         const facts = await window.jarvis.listFacts();
         factsEl.textContent = "";
@@ -336,15 +482,13 @@
           row.className = "fact";
           const text = document.createElement("span");
           text.textContent = f.fact;
-          const del = document.createElement("button");
-          del.className = "del";
-          del.textContent = "\u00d7";
-          del.title = "Forget this";
-          del.addEventListener("click", async () => {
-            await window.jarvis.deleteFact(f.id);
-            loadFacts();
-          });
-          row.append(text, del);
+          row.append(
+            text,
+            deleteButton("Forget this", async () => {
+              await window.jarvis.deleteFact(f.id);
+              loadFacts();
+            })
+          );
           factsEl.appendChild(row);
         }
       }
@@ -387,16 +531,30 @@
         }
       });
 
-      tasksBtn.addEventListener("click", () => showPanel("tasks"));
-      memoryBtn.addEventListener("click", () => showPanel("memory"));
-      document.getElementById("taskAddBtn").addEventListener("click", addTaskFromInput);
+      for (const view of VIEWS) {
+        $(view + "Btn").addEventListener("click", () => showPanel(view));
+      }
+      $("taskAddBtn").addEventListener("click", addTaskFromInput);
       taskInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") addTaskFromInput();
       });
-      document.getElementById("addBtn").addEventListener("click", addFactFromInput);
+      $("noteAddBtn").addEventListener("click", addNoteFromInput);
+      noteInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addNoteFromInput();
+      });
+      $("reminderAddBtn").addEventListener("click", addReminderFromInputs);
+      reminderWhen.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addReminderFromInputs();
+      });
+      $("addBtn").addEventListener("click", addFactFromInput);
       factInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") addFactFromInput();
       });
+
+      // Keep the open panel fresh, for example when a reminder fires in the background.
+      setInterval(() => {
+        if (!document.hidden) refreshPanel();
+      }, 15000);
 
       (async () => {
         const history = await window.jarvis.getHistory();
