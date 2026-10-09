@@ -508,6 +508,20 @@
       }
 
       // ---------- chat ----------
+      // Reminders and briefings add messages while the window is hidden.
+      // When the window comes back, rebuild the list if it is out of date.
+      async function syncHistory() {
+        if (inputEl.disabled) return; // a reply is being written right now
+        const history = await window.jarvis.getHistory();
+        const last = history[history.length - 1];
+        if (!last) return;
+        const shown = messagesEl.querySelectorAll(".msg.user, .msg.assistant");
+        const lastShown = shown[shown.length - 1];
+        if (lastShown && lastShown.textContent === last.content) return;
+        messagesEl.textContent = "";
+        for (const m of history) addMessage(m.role, m.content);
+      }
+
       async function send() {
         const text = inputEl.value.trim();
         if (!text) return;
@@ -556,9 +570,13 @@
         if (!document.hidden) refreshPanel();
       }, 15000);
 
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) syncHistory();
+      });
+      window.addEventListener("focus", syncHistory);
+
       (async () => {
-        const history = await window.jarvis.getHistory();
-        for (const m of history) addMessage(m.role, m.content);
+        await syncHistory();
         inputEl.focus();
       })();
     </script>

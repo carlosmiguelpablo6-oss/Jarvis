@@ -1,10 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from assistant import handle_message
 from backup import backup_database
+from briefing import build_daily_briefing
 from database import (
     add_fact,
     add_message,
@@ -17,11 +18,13 @@ from database import (
     delete_reminder,
     delete_task,
     get_recent_messages,
+    get_setting,
     init_db,
     list_facts,
     list_notes,
     list_reminders,
     list_tasks,
+    set_setting,
     set_task_done,
 )
 from reminders import parse_when
@@ -171,6 +174,24 @@ def claim_reminders():
     for r in due:
         add_message("assistant", f"Reminder: {r['text']}")
     return due
+
+
+@app.get("/briefing")
+def get_briefing():
+    return {"text": build_daily_briefing()}
+
+
+@app.post("/briefing/auto")
+def auto_briefing():
+    """Called by the desktop app after startup. Returns the briefing only the first
+    time each day (and saves it to the chat history). Otherwise returns text: null."""
+    today = date.today().isoformat()
+    if get_setting("last_briefing_date") == today:
+        return {"text": None}
+    text = build_daily_briefing()
+    add_message("assistant", text)
+    set_setting("last_briefing_date", today)
+    return {"text": text}
 
 
 @app.post("/chat", response_model=ChatResponse)

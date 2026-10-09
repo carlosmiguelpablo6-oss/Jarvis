@@ -64,6 +64,14 @@ def init_db():
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
 
 
 # ---------- messages ----------
@@ -231,3 +239,20 @@ def delete_reminder(reminder_id):
         with conn:
             cur = conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             return cur.rowcount > 0
+
+
+# ---------- settings ----------
+def get_setting(key, default=None):
+    with closing(get_connection()) as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key, value):
+    with closing(get_connection()) as conn:
+        with conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )

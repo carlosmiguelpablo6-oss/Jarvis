@@ -1,7 +1,7 @@
 import json
 import random
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 import ollama
 
@@ -16,9 +16,12 @@ from database import (
     list_notes,
     list_reminders,
     list_tasks,
+    set_setting,
     set_task_done,
 )
+from briefing import build_daily_briefing
 from reminders import format_due, parse_when
+from weather import format_weather, get_weather
 
 MODEL = "qwen2.5:7b"
 
@@ -57,6 +60,8 @@ ANALYSIS_INSTRUCTIONS = """You read one message from the user and return JSON wi
   "list_notes": the user asks to see, show, or list their notes.
   "add_reminder": the user asks to be reminded of something (for example "remind me to...").
   "list_reminders": the user asks to see, show, or list their reminders.
+  "daily_briefing": the user asks for their daily briefing, a summary of their day, or what is on today.
+  "weather": the user asks about the weather or whether it will rain.
   "confirm_pending": the pending question asks whether to add a task, and the user agrees.
   "give_reminder_time": the pending question asks when to remind the user, and the user gives a time. Put the time in when_text, written clearly (for example "4 pm" or "tomorrow at 8 am").
   "decline_pending": the pending question is not "none" and the user says no, never mind, or cancels.
@@ -150,6 +155,10 @@ EXAMPLES = [
         reminder_text="Take out the trash",
     ),
     _example("What are my reminders?", action="list_reminders"),
+    _example("Give me my daily briefing.", action="daily_briefing"),
+    _example("What does my day look like?", action="daily_briefing"),
+    _example("Will it rain today?", action="weather"),
+    _example("Good morning Jarvis."),
     _example("Yes please.", pending=_COOKIE, action="confirm_pending"),
     _example("No, never mind.", pending=_COOKIE, action="decline_pending"),
     _example("What is 12 times 12?", pending=_COOKIE),
@@ -178,6 +187,8 @@ VALID_ACTIONS = (
     "list_notes",
     "add_reminder",
     "list_reminders",
+    "daily_briefing",
+    "weather",
     "confirm_pending",
     "give_reminder_time",
     "decline_pending",
@@ -439,6 +450,11 @@ def handle_message(user_message):
         reply = format_note_list(list_notes(10))
     elif action == "list_reminders":
         reply = format_reminder_list(list_reminders(10))
+    elif action == "daily_briefing":
+        reply = build_daily_briefing()
+        set_setting("last_briefing_date", date.today().isoformat())
+    elif action == "weather":
+        reply = format_weather(get_weather())
     else:
         action_note = run_action(analysis)
 

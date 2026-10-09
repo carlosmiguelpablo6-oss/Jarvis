@@ -150,6 +150,26 @@ async function checkReminders() {
   }
 }
 
+// ---------- daily briefing: the backend returns it only once per day ----------
+async function checkDailyBriefing() {
+  try {
+    const res = await fetch(`${BACKEND}/briefing/auto`, { method: "POST" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.text) return;
+    const note = new Notification({
+      title: "Jarvis daily briefing",
+      body: "Your briefing is ready. Click to read it.",
+    });
+    note.on("click", () => openDashboard());
+    note.show();
+    setOrb("speaking");
+    setTimeout(() => setOrb("idle"), 5000);
+  } catch {
+    // The backend may still be starting. A second attempt runs later.
+  }
+}
+
 // ---------- window and chat messages from the pages ----------
 ipcMain.on("dashboard:open", openDashboard);
 
@@ -375,6 +395,9 @@ if (!gotLock) {
     createTray();
     reminderTimer = setInterval(checkReminders, 30000);
     setTimeout(checkReminders, 15000);
+    // Wait a little so the backend and the network are ready, then try twice.
+    setTimeout(checkDailyBriefing, 25000);
+    setTimeout(checkDailyBriefing, 90000);
   });
 }
 
