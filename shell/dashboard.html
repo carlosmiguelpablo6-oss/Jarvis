@@ -645,8 +645,8 @@
       function updateAutoUi() {
         autoBtn.classList.toggle("on", autoSend);
         autoBtn.title = autoSend
-          ? "Auto-send voice: on. Your words are sent as soon as you stop talking."
-          : "Auto-send voice: off. Your words wait in the box until you press Enter.";
+          ? "Auto: Jarvis stops listening when you stop talking, then sends your words."
+          : "Auto is off: click the mic (or the hotkey) again to stop. Your words wait in the box.";
       }
 
       autoBtn.addEventListener("click", () => {
@@ -685,6 +685,62 @@
         }
       }
 
+            // ---------- stop by itself when you stop talking (needs Auto on) ----------
+      const SILENCE_MS = 1300; // quiet for this long after speech = you are finished
+      const NO_SPEECH_MS = 7000; // nothing said at all for this long = give up
+      const MIN_SPEECH_MS = 200; // the voice must last this long to count as speech
+      const CALIBRATE_MS = 400; // first moments, used to measure the room's noise
+      const THRESHOLD_MIN = 0.015; // loudness (0 to 1) that counts as speech. Lower it if Jarvis misses a quiet voice
+      const NOISE_FACTOR = 3; // speech must be this much louder than the room
+      let stopWatching = null;
+      let stoppedForNoSpeech = false;
+
+      function watchForSilence(stream) {
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 1024;
+        context.createMediaStreamSource(stream).connect(analyser);
+        const samples = new Float32Array(analyser.fftSize);
+        const startedAt = performance.now();
+        let lastTick = startedAt;
+        let noise = null;
+        let speechMs = 0;
+        let lastVoiceAt = 0;
+
+        const timer = setInterval(() => {
+          const now = performance.now();
+          const elapsed = now - lastTick;
+          lastTick = now;
+
+          analyser.getFloatTimeDomainData(samples);
+          let sum = 0;
+          for (const s of samples) sum += s * s;
+          const level = Math.sqrt(sum / samples.length);
+
+          if (now - startedAt < CALIBRATE_MS) {
+            noise = noise === null ? level : Math.min(noise, level);
+            return;
+          }
+          const threshold = Math.max(THRESHOLD_MIN, (noise || 0) * NOISE_FACTOR);
+          if (level > threshold) {
+            speechMs += elapsed;
+            lastVoiceAt = now;
+          }
+
+          if (speechMs >= MIN_SPEECH_MS) {
+            if (now - lastVoiceAt > SILENCE_MS) stopRecording();
+          } else if (now - startedAt > NO_SPEECH_MS) {
+            stoppedForNoSpeech = true;
+            stopRecording();
+          }
+        }, 60);
+
+        return () => {
+          clearInterval(timer);
+          context.close();
+        };
+      }
+
       async function startRecording(fromHotkey) {
         stopSpeaking();
         startedByHotkey = fromHotkey;
@@ -708,13 +764,24 @@
         recorder.addEventListener("stop", onRecordingStopped);
         recorder.start();
         recordStart = Date.now();
+        stoppedForNoSpeech = false;
+        if (autoSend) stopWatching = watchForSilence(mediaStream);
         window.jarvis.setVoiceState("listening");
-        setVoiceUi("recording", "Listening... click the mic again to stop.");
+        setVoiceUi(
+          "recording",
+          autoSend
+            ? "Listening... I'll stop when you stop talking."
+            : "Listening... click the mic again to stop."
+        );
         recordTimer = setTimeout(stopRecording, MAX_RECORD_MS);
       }
 
       function stopRecording() {
         clearTimeout(recordTimer);
+        if (stopWatching) {
+          stopWatching();
+          stopWatching = null;
+        }
         if (recorder && recorder.state !== "inactive") recorder.stop();
       }
 
@@ -724,6 +791,12 @@
         if (seconds < MIN_RECORD_SECONDS) {
           window.jarvis.setVoiceState("idle");
           setVoiceUi("idle", "Too short. Click the mic and speak for a moment.");
+          return;
+        }
+        if (stoppedForNoSpeech) {
+          window.jarvis.setVoiceState("idle");
+          setVoiceUi("idle", "I didn't hear anything. Try again.");
+          finishVoice();
           return;
         }
         setVoiceUi("transcribing", "Transcribing... (the first time takes longer)");

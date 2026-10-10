@@ -20,10 +20,12 @@ from database import (
     set_task_done,
 )
 from briefing import build_daily_briefing
+from deletion import KINDS, begin_delete, choose_item, confirm_delete, parse_choice
 from reminders import format_due, parse_when
 from weather import format_weather, get_weather
 
 MODEL = "qwen2.5:7b"
+NUM_CTX = 6144  # room for the long analysis prompt (the default of 4096 is too tight)
 
 SYSTEM_PROMPT = (
     "You are Jarvis, a personal AI assistant running on the user's own laptop. "
@@ -46,6 +48,9 @@ SYSTEM_PROMPT = (
     "You cannot set reminders yourself. If the user asks to be reminded and no note "
     "below says it was set, say it was not set and ask them to rephrase, for example: "
     "Remind me to call mom tomorrow at 7 am. "
+    "You cannot delete anything yourself. If the user asks to delete, remove, or cancel "
+    "something and no note below says it was deleted, say it was not deleted and ask "
+    "them to rephrase, for example: Cancel my reminder to call mom. "
     "Never ask the user whether to add a task or a note. The system does that itself."
 )
 
@@ -62,7 +67,8 @@ ANALYSIS_INSTRUCTIONS = """You read one message from the user and return JSON wi
   "list_reminders": the user asks to see, show, or list their reminders.
   "daily_briefing": the user asks for their daily briefing, a summary of their day, or what is on today.
   "weather": the user asks about the weather or whether it will rain.
-  "confirm_pending": the pending question asks whether to add a task, and the user agrees.
+  "delete_item": the user asks to delete, remove, or cancel ONE task, note, or reminder (not "finished": that is complete_task).
+  "confirm_pending": the pending question asks whether to add a task or delete an item, and the user agrees.
   "give_reminder_time": the pending question asks when to remind the user, and the user gives a time. Put the time in when_text, written clearly (for example "4 pm" or "tomorrow at 8 am").
   "decline_pending": the pending question is not "none" and the user says no, never mind, or cancels.
   "none": anything else.
@@ -71,6 +77,8 @@ ANALYSIS_INSTRUCTIONS = """You read one message from the user and return JSON wi
 - note_text: for add_note, the note as one clear sentence. Otherwise an empty string.
 - reminder_text: for add_reminder, what to be reminded of, short, starting with a verb (for example "Call mom"). Otherwise an empty string.
 - when_text: for add_reminder, the time phrase exactly as the user said it (for example "tomorrow at 7 am" or "in 10 minutes"). Empty if the user gave no time. Otherwise an empty string.
+- item_kind: for delete_item, "task", "note", or "reminder". Otherwise an empty string.
+- item_text: for delete_item, the few words that identify the item, without words like delete, my, or the. Empty if the user did not say which one. Otherwise an empty string.
 Reply with JSON only."""
 
 BLANK_RESULT = {
@@ -81,6 +89,8 @@ BLANK_RESULT = {
     "note_text": "",
     "reminder_text": "",
     "when_text": "",
+    "item_kind": "",
+    "item_text": "",
 }
 
 
@@ -94,6 +104,7 @@ def _example(message, tasks="none", pending="none", **fields):
 
 _COOKIE = 'Should I add the task "Buy a cookie"?'
 _TRASH = 'When should I remind the user about "Take out the trash"?'
+_DELETE = 'Should I delete the reminder "Call mom (Thu, Oct 8 at 7:00 AM)"?'
 _OPEN = "3: Buy rice\n4: Call the bank"
 
 EXAMPLES = [
@@ -173,6 +184,28 @@ EXAMPLES = [
     ),
     _example("Never mind.", pending=_TRASH, action="decline_pending"),
     _example("What is 12 times 12?", pending=_TRASH),
+
+    _example(
+        "Cancel my reminder to call mom.",
+        action="delete_item",
+        item_kind="reminder",
+        item_text="call mom",
+    ),
+    _example(
+        "Delete my note about the printer.",
+        action="delete_item",
+        item_kind="note",
+        item_text="printer",
+    ),
+    _example(
+        "Remove the task buy rice.",
+        action="delete_item",
+        item_kind="task",
+        item_text="buy rice",
+    ),
+    _example("Delete my reminder.", action="delete_item", item_kind="reminder"),
+    _example("Yes, delete it.", pending=_DELETE, action="confirm_pending"),
+    _example("No, keep it.", pending=_DELETE, action="decline_pending"),
 ]
 
 ANALYSIS_PROMPT = ANALYSIS_INSTRUCTIONS + "\n\nExamples:\n\n" + "\n\n".join(EXAMPLES)
@@ -189,6 +222,7 @@ VALID_ACTIONS = (
     "list_reminders",
     "daily_briefing",
     "weather",
+    "delete_item",
     "confirm_pending",
     "give_reminder_time",
     "decline_pending",
@@ -204,6 +238,8 @@ ANALYSIS_SCHEMA = {
         "note_text": {"type": "string"},
         "reminder_text": {"type": "string"},
         "when_text": {"type": "string"},
+        "item_kind": {"type": "string"},
+        "item_text": {"type": "string"},
     },
     "required": list(BLANK_RESULT.keys()),
 }
@@ -229,9 +265,9 @@ pending = None
 
 # Safety net: the model sometimes claims it saved or set something when our code did not.
 FALSE_CLAIM = re.compile(
-    r"\b(i('ll| will| have|'ve| am going to)\s+(remind|set|add|save|remember)\b"
-    r"|(reminder|task|note)\s+(has been|is now|was|is)\s+(set|added|saved|created)\b"
-    r"|(added|saved|set)\b.{0,40}\b(task|note|reminder|to-do)\b)",
+    r"\b(i('ll| will| have|'ve| am going to)\s+(remind|set|add|save|remember|delete|remove|cancel)\b"
+    r"|(reminder|task|note)\s+(has been|is now|was|is)\s+(set|added|saved|created|deleted|removed|cancelled)\b"
+    r"|(added|saved|set|deleted|removed|cancelled)\b.{0,40}\b(task|note|reminder|to-do)\b)",
     re.IGNORECASE,
 )
 FALSE_CLAIM_REPLY = (
@@ -248,6 +284,10 @@ def analyze_message(user_message):
         pending_text = f'Should I add the task "{pending["value"]}"?'
     elif pending and pending["type"] == "reminder":
         pending_text = f'When should I remind the user about "{pending["value"]}"?'
+    elif pending and pending["type"] == "delete":
+        pending_text = f'Should I delete the {pending["kind"]} "{pending["label"]}"?'
+    elif pending and pending["type"] == "delete_choice":
+        pending_text = "Which item should I delete?"
     else:
         pending_text = "none"
     try:
@@ -265,7 +305,7 @@ def analyze_message(user_message):
                 },
             ],
             format=ANALYSIS_SCHEMA,
-            options={"temperature": 0},
+            options={"temperature": 0, "num_ctx": NUM_CTX},
         )
         data = json.loads(response.message.content)
     except Exception as err:
@@ -282,6 +322,8 @@ def analyze_message(user_message):
         action = "none"
     task_id = data.get("task_id")
     task_id = task_id if isinstance(task_id, int) else 0
+    item_kind = text_field("item_kind").lower()
+    item_kind = item_kind if item_kind in KINDS else ""
     return {
         "facts": facts,
         "action": action,
@@ -290,6 +332,8 @@ def analyze_message(user_message):
         "note_text": text_field("note_text"),
         "reminder_text": text_field("reminder_text"),
         "when_text": text_field("when_text"),
+        "item_kind": item_kind,
+        "item_text": text_field("item_text"),
     }
 
 
@@ -403,6 +447,14 @@ def handle_message(user_message):
 
     add_message("user", user_message)
 
+    # "Which one?" is answered with a number. Read it directly, no model needed.
+    if pending and pending["type"] == "delete_choice":
+        index = parse_choice(user_message, len(pending["items"]))
+        if index is not None:
+            reply, pending = choose_item(pending, index)
+            add_message("assistant", reply)
+            return reply
+
     analysis = analyze_message(user_message)
     action = analysis["action"]
 
@@ -420,8 +472,15 @@ def handle_message(user_message):
     elif action == "confirm_pending" and previous_type == "task":
         if add_task(previous["value"]):
             reply = random.choice(CONFIRM_REPLIES).format(title=previous["value"])
+    elif action == "confirm_pending" and previous_type == "delete":
+        reply = confirm_delete(previous)
+    elif action == "delete_item":
+        reply, pending = begin_delete(analysis)
     elif action == "decline_pending" and previous:
-        reply = random.choice(DECLINE_REPLIES)
+        if previous_type in ("delete", "delete_choice"):
+            reply = "Okay, I won't delete anything."
+        else:
+            reply = random.choice(DECLINE_REPLIES)
     elif action == "give_reminder_time" and previous_type == "reminder":
         reply, ok = set_reminder(previous["value"], analysis["when_text"])
         if not ok:
@@ -465,7 +524,7 @@ def handle_message(user_message):
         response = ollama.chat(
             model=MODEL,
             messages=messages,
-            options={"temperature": 0.5, "num_predict": 400},
+            options={"temperature": 0.5, "num_predict": 400, "num_ctx": NUM_CTX},
         )
         reply = response.message.content or "Done."
         # If the model claims it saved or set something but our code did not, correct it.
