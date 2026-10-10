@@ -83,6 +83,19 @@
         cursor: pointer;
       }
       button:disabled { opacity: 0.5; cursor: default; }
+      .micBtn {
+        background: #16233d;
+        padding: 0 14px;
+        display: flex;
+        align-items: center;
+      }
+      .micBtn:hover { background: #1c2f52; }
+      .micBtn.rec { background: #d93a3a; animation: recPulse 1s ease-in-out infinite; }
+      .micBtn svg { width: 20px; height: 20px; fill: currentColor; }
+      @keyframes recPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(217, 58, 58, 0.6); }
+        50% { box-shadow: 0 0 0 8px rgba(217, 58, 58, 0); }
+      }
       .tabBtn { background: #16233d; padding: 6px 12px; font-size: 14px; }
       .tabBtn:hover { background: #1c2f52; }
       .tabBtn.on { background: #2b8cff; }
@@ -186,6 +199,11 @@
             rows="1"
             placeholder="Message Jarvis...  (Enter to send, Shift+Enter for a new line)"
           ></textarea>
+          <button id="micBtn" class="micBtn" title="Speak: click to start, click again to stop">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" />
+            </svg>
+          </button>
           <button id="send">Send</button>
         </div>
       </div>
@@ -243,6 +261,7 @@
       </aside>
     </div>
 
+    <script src="recorder.js"></script>
     <script>
       const $ = (id) => document.getElementById(id);
       const messagesEl = $("messages");
@@ -536,6 +555,88 @@
         inputEl.focus();
         refreshPanel();
       }
+
+      // ---------- voice ----------
+      const micBtn = $("micBtn");
+      const MAX_RECORD_MS = 60000;
+      const MIN_RECORD_SECONDS = 0.5;
+      const defaultPlaceholder = inputEl.placeholder;
+      let voiceState = "idle"; // idle, recording, transcribing
+      let recorder = null;
+      let mediaStream = null;
+      let chunks = [];
+      let recordTimer = null;
+      let recordStart = 0;
+
+      function setVoiceUi(state, hint) {
+        voiceState = state;
+        micBtn.classList.toggle("rec", state === "recording");
+        micBtn.disabled = state === "transcribing";
+        inputEl.placeholder = hint || defaultPlaceholder;
+      }
+
+      async function startRecording() {
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+          });
+        } catch (err) {
+          setVoiceUi(
+            "idle",
+            "Microphone not available. Check Windows Settings > Privacy & security > Microphone."
+          );
+          return;
+        }
+        chunks = [];
+        recorder = new MediaRecorder(mediaStream);
+        recorder.addEventListener("dataavailable", (e) => {
+          if (e.data && e.data.size) chunks.push(e.data);
+        });
+        recorder.addEventListener("stop", onRecordingStopped);
+        recorder.start();
+        recordStart = Date.now();
+        window.jarvis.setVoiceState("listening");
+        setVoiceUi("recording", "Listening... click the mic again to stop.");
+        recordTimer = setTimeout(stopRecording, MAX_RECORD_MS);
+      }
+
+      function stopRecording() {
+        clearTimeout(recordTimer);
+        if (recorder && recorder.state !== "inactive") recorder.stop();
+      }
+
+      async function onRecordingStopped() {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        const seconds = (Date.now() - recordStart) / 1000;
+        if (seconds < MIN_RECORD_SECONDS) {
+          window.jarvis.setVoiceState("idle");
+          setVoiceUi("idle", "Too short. Click the mic and speak for a moment.");
+          return;
+        }
+        setVoiceUi("transcribing", "Transcribing... (the first time takes longer)");
+        try {
+          const blob = new Blob(chunks, { type: recorder.mimeType });
+          const wav = await JarvisAudio.blobToWav(blob);
+          const result = await window.jarvis.transcribeAudio(new Uint8Array(wav));
+          if (!result.ok) {
+            setVoiceUi("idle", result.error);
+          } else if (!result.text) {
+            setVoiceUi("idle", "I didn't catch that. Try again.");
+          } else {
+            inputEl.value = inputEl.value ? inputEl.value + " " + result.text : result.text;
+            setVoiceUi("idle");
+            inputEl.focus();
+          }
+        } catch (err) {
+          window.jarvis.setVoiceState("idle");
+          setVoiceUi("idle", "Could not process the recording.");
+        }
+      }
+
+      micBtn.addEventListener("click", () => {
+        if (voiceState === "idle") startRecording();
+        else if (voiceState === "recording") stopRecording();
+      });
 
       sendBtn.addEventListener("click", send);
       inputEl.addEventListener("keydown", (e) => {

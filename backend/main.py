@@ -2,6 +2,7 @@ from datetime import date, datetime
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from voice import router as voice_router
 
 from assistant import handle_message
 from backup import backup_database
@@ -30,6 +31,7 @@ from database import (
 from reminders import parse_when
 
 app = FastAPI(title="Jarvis")
+app.include_router(voice_router)
 
 init_db()
 backup_database()

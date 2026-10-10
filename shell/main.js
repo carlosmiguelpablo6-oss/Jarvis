@@ -7,6 +7,7 @@ const {
   Menu,
   Notification,
   nativeImage,
+  session,
 } = require("electron");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
@@ -214,6 +215,37 @@ ipcMain.handle("chat:history", async () => {
   }
 });
 
+// ---------- voice: microphone recordings from the dashboard ----------
+ipcMain.on("voice:state", (_event, state) => {
+  if (state === "listening" || state === "idle") setOrb(state);
+});
+
+ipcMain.handle("voice:transcribe", async (_event, audioBytes) => {
+  setOrb("thinking");
+  try {
+    const form = new FormData();
+    form.append(
+      "audio",
+      new Blob([Buffer.from(audioBytes)], { type: "audio/wav" }),
+      "speech.wav"
+    );
+    const res = await fetch(`${BACKEND}/voice/transcribe`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const data = await res.json();
+    return { ok: true, text: typeof data.text === "string" ? data.text : "" };
+  } catch (err) {
+    return {
+      ok: false,
+      error: "Could not transcribe that. Is the Jarvis backend running?",
+    };
+  } finally {
+    setOrb("idle");
+  }
+});
+
 // ---------- memory (facts) ----------
 ipcMain.handle("facts:list", async () => {
   try {
@@ -390,6 +422,14 @@ if (!gotLock) {
   app.on("second-instance", () => openDashboard());
 
   app.whenReady().then(() => {
+    // Jarvis only loads its own local pages, so allow the microphone and nothing else.
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(permission === "media");
+    });
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+      return permission === "media";
+    });
+
     startBackend();
     createSphereWindow();
     createTray();
