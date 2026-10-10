@@ -12,7 +12,9 @@ contextBridge.exposeInMainWorld("jarvis", {
   sendChat: (message) => ipcRenderer.invoke("chat:send", message),
   getHistory: () => ipcRenderer.invoke("chat:history"),
 
-  // voice
+  // 
+  onVoiceToggle: (callback) =>
+    ipcRenderer.on("voice:toggle", (_event, options) => callback(options)),
   setVoiceState: (state) => ipcRenderer.send("voice:state", state),
   transcribeAudio: (wavBytes) => ipcRenderer.invoke("voice:transcribe", wavBytes),
 

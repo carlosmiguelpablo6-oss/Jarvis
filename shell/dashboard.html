@@ -567,6 +567,7 @@
       let chunks = [];
       let recordTimer = null;
       let recordStart = 0;
+      let startedByHotkey = false;
 
       function setVoiceUi(state, hint) {
         voiceState = state;
@@ -575,7 +576,15 @@
         inputEl.placeholder = hint || defaultPlaceholder;
       }
 
-      async function startRecording() {
+      function finishVoice() {
+        if (startedByHotkey) {
+          startedByHotkey = false;
+          window.jarvis.OpenDashboard();
+        }
+      }
+
+      async function startRecording(fromHotkey) {
+        startedByHotkey = fromHotkey;
         try {
           mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
@@ -585,6 +594,7 @@
             "idle",
             "Microphone not available. Check Windows Settings > Privacy & security > Microphone."
           );
+          finishVoice();
           return;
         }
         chunks = [];
@@ -631,12 +641,16 @@
           window.jarvis.setVoiceState("idle");
           setVoiceUi("idle", "Could not process the recording.");
         }
+        finishVoice();
       }
 
-      micBtn.addEventListener("click", () => {
-        if (voiceState === "idle") startRecording();
+      function toggleVoice(fromHotkey) {
+        if (voiceState === "idle") startRecording(fromHotkey);
         else if (voiceState === "recording") stopRecording();
-      });
+      }
+
+      micBtn.addEventListener("click", () => toggleVoice(false));
+      window.jarvis.onVoiceToggle((options) => toggleVoice(Boolean(options && options.fromHotkey)));
 
       sendBtn.addEventListener("click", send);
       inputEl.addEventListener("keydown", (e) => {

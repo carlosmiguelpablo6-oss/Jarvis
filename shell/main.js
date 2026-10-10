@@ -8,6 +8,7 @@ const {
   Notification,
   nativeImage,
   session,
+  globalShortcut,
 } = require("electron");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
@@ -15,6 +16,7 @@ const fs = require("fs");
 
 const BACKEND = "http://127.0.0.1:8000";
 const SPHERE_SIZE = 140;
+const VOICE_HOTKEY = "Control+Alt+J";
 let sphereWindow = null;
 let dashboardWindow = null;
 let isQuitting = false;
@@ -57,6 +59,7 @@ function createTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Open Dashboard", click: () => openDashboard() },
+      { label: `Talk (${VOICE_HOTKEY})`, click: () => toggleVoice() },
       { type: "separator" },
       { label: "Quit Jarvis", click: () => app.quit() },
     ])
@@ -86,7 +89,7 @@ function createSphereWindow() {
   sphereWindow.loadFile("sphere.html");
 }
 
-function createDashboardWindow() {
+function createDashboardWindow(showWhenReady = true) {
   dashboardWindow = new BrowserWindow({
     width: 900,
     height: 640,
@@ -97,12 +100,15 @@ function createDashboardWindow() {
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      backgroundThrottling: false,
     },
   });
 
   dashboardWindow.setMenuBarVisibility(false);
   dashboardWindow.loadFile("dashboard.html");
-  dashboardWindow.once("ready-to-show", () => dashboardWindow.show());
+  dashboardWindow.once("ready-to-show", () => {
+    if (showWhenReady) dashboardWindow.show();
+  });
 
   // Closing the dashboard hides it instead of destroying it,
   // so it reopens instantly and keeps its state.
@@ -122,6 +128,17 @@ function openDashboard() {
   if (dashboardWindow.isMinimized()) dashboardWindow.restore();
   dashboardWindow.show();
   dashboardWindow.focus();
+}
+
+function toggleVoice() {
+  if (!dashboardWindow) {
+    createDashboardWindow(false);
+    dashboardWindow.webContents.once("did-finish-load", () => {
+      dashboardWindow.webContents.send("voice:toggle", { fromHotkey: true });
+    });
+    return;
+  }
+  dashboardWindow.webContents.send("voice:toggle", { fromHotkey: true });
 }
 
 function setOrb(state) {
@@ -422,6 +439,9 @@ if (!gotLock) {
   app.on("second-instance", () => openDashboard());
 
   app.whenReady().then(() => {
+    if (!globalShortcut.register(VOICE_HOTKEY, toggleVoice)) {
+      console.log(`Could not register ${VOICE_HOTKEY}. Another app may be using it.`);
+    }
     // Jarvis only loads its own local pages, so allow the microphone and nothing else.
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
       callback(permission === "media");
@@ -440,6 +460,10 @@ if (!gotLock) {
     setTimeout(checkDailyBriefing, 90000);
   });
 }
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+});
 
 app.on("window-all-closed", () => {
   app.quit();
