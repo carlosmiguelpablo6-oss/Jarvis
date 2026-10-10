@@ -214,8 +214,7 @@ ipcMain.handle("chat:send", async (_event, message) => {
     });
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     const data = await res.json();
-    setOrb("speaking");
-    setTimeout(() => setOrb("idle"), 2000);
+    setOrb("idle");
     return { ok: true, reply: data.reply };
   } catch (err) {
     setOrb("idle");
@@ -234,7 +233,7 @@ ipcMain.handle("chat:history", async () => {
 
 // ---------- voice: microphone recordings from the dashboard ----------
 ipcMain.on("voice:state", (_event, state) => {
-  if (state === "listening" || state === "idle") setOrb(state);
+  if (state === "listening" || state === "speaking" || state === "idle") setOrb(state);
 });
 
 ipcMain.handle("voice:transcribe", async (_event, audioBytes) => {
@@ -260,6 +259,30 @@ ipcMain.handle("voice:transcribe", async (_event, audioBytes) => {
     };
   } finally {
     setOrb("idle");
+  }
+});
+
+ipcMain.handle("voice:speak", async (_event, text) => {
+  if (typeof text !== "string" || !text.trim()) {
+    return { ok: false, error: "Nothing to say." };
+  }
+  try {
+    const res = await fetch(`${BACKEND}/voice/speak`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      let error = "Could not make speech.";
+      try {
+        const data = await res.json();
+        if (typeof data.detail === "string") error = data.detail;
+      } catch {}
+      return { ok: false, error };
+    }
+    return { ok: true, audio: new Uint8Array(await res.arrayBuffer()) };
+  } catch {
+    return { ok: false, error: "Can't reach the Jarvis server." };
   }
 });
 

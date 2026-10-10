@@ -96,6 +96,16 @@
         0%, 100% { box-shadow: 0 0 0 0 rgba(217, 58, 58, 0.6); }
         50% { box-shadow: 0 0 0 8px rgba(217, 58, 58, 0); }
       }
+      .speakBtn {
+        background: #16233d;
+        padding: 0 14px;
+        display: flex;
+        align-items: center;
+      }
+      .speakBtn:hover { background: #1c2f52; }
+      .speakBtn.on { background: #1f7a4d; }
+      .speakBtn svg { width: 20px; height: 20px; fill: currentColor; }
+
       .tabBtn { background: #16233d; padding: 6px 12px; font-size: 14px; }
       .tabBtn:hover { background: #1c2f52; }
       .tabBtn.on { background: #2b8cff; }
@@ -199,6 +209,11 @@
             rows="1"
             placeholder="Message Jarvis...  (Enter to send, Shift+Enter for a new line)"
           ></textarea>
+          <button id="speakBtn" class="speakBtn">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+            </svg>
+          </button>
           <button id="micBtn" class="micBtn" title="Speak: click to start, click again to stop">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" />
@@ -544,6 +559,7 @@
       async function send() {
         const text = inputEl.value.trim();
         if (!text) return;
+        stopSpeaking();
         inputEl.value = "";
         setBusy(true);
         addMessage("user", text);
@@ -554,7 +570,64 @@
         setBusy(false);
         inputEl.focus();
         refreshPanel();
+        if (result.ok && speakEnabled) speak(result.reply);
       }
+
+            // ---------- spoken replies ----------
+      const speakBtn = $("speakBtn");
+      let speakEnabled = false;
+      let currentAudio = null;
+
+      try {
+        speakEnabled = localStorage.getItem("jarvis.speak") === "on";
+      } catch (err) {}
+
+      function updateSpeakUi() {
+        speakBtn.classList.toggle("on", speakEnabled);
+        speakBtn.title = speakEnabled
+          ? "Spoken replies: on (click to turn off)"
+          : "Spoken replies: off (click to turn on)";
+      }
+
+      function stopSpeaking() {
+        if (!currentAudio) return;
+        currentAudio.pause();
+        currentAudio = null;
+        window.jarvis.setVoiceState("idle");
+      }
+
+      async function speak(text) {
+        stopSpeaking();
+        const result = await window.jarvis.speak(text);
+        if (!result.ok) {
+          addMessage("status", "Voice: " + result.error);
+          return;
+        }
+        const url = URL.createObjectURL(new Blob([result.audio], { type: "audio/wav" }));
+        const audio = new Audio(url);
+        currentAudio = audio;
+        const finished = () => {
+          URL.revokeObjectURL(url);
+          if (currentAudio === audio) {
+            currentAudio = null;
+            window.jarvis.setVoiceState("idle");
+          }
+        };
+        audio.addEventListener("ended", finished);
+        audio.addEventListener("error", finished);
+        window.jarvis.setVoiceState("speaking");
+        audio.play().catch(finished);
+      }
+
+      speakBtn.addEventListener("click", () => {
+        speakEnabled = !speakEnabled;
+        try {
+          localStorage.setItem("jarvis.speak", speakEnabled ? "on" : "off");
+        } catch (err) {}
+        if (!speakEnabled) stopSpeaking();
+        updateSpeakUi();
+      });
+      updateSpeakUi();
 
       // ---------- voice ----------
       const micBtn = $("micBtn");
@@ -584,6 +657,7 @@
       }
 
       async function startRecording(fromHotkey) {
+        stopSpeaking();
         startedByHotkey = fromHotkey;
         try {
           mediaStream = await navigator.mediaDevices.getUserMedia({
