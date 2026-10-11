@@ -270,3 +270,6 @@ Any change to `shell` files needs a full app restart (quit from the tray, then `
 ## 14. Next: Major Topic 6
 
 Proposed: **voice**. Push-to-talk first (speech-to-text with Whisper, running offline), then spoken replies (Piper text-to-speech), using the sphere's existing "listening" and "speaking" states. A wake word and PC control with n8n come after that.
+
+
+- **Deleting by chat** was added later (see document 06): Jarvis can delete a task, note, or reminder, but always asks yes or no first.
