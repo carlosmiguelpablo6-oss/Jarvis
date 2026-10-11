@@ -21,6 +21,7 @@ from database import (
 )
 from briefing import build_daily_briefing
 from deletion import KINDS, begin_delete, choose_item, confirm_delete, parse_choice
+from pc import confirm_pc, handle_pc_command, pick_file
 from reminders import format_due, parse_when
 from weather import format_weather, get_weather
 
@@ -51,6 +52,9 @@ SYSTEM_PROMPT = (
     "You cannot delete anything yourself. If the user asks to delete, remove, or cancel "
     "something and no note below says it was deleted, say it was not deleted and ask "
     "them to rephrase, for example: Cancel my reminder to call mom. "
+    "You cannot control the computer yourself. If the user asks you to open an app, find a "
+    "file, change the volume, or lock the PC and no note below says it was done, say it "
+    "was not done and ask them to rephrase, for example: Open Notepad. "
     "Never ask the user whether to add a task or a note. The system does that itself."
 )
 
@@ -67,8 +71,9 @@ ANALYSIS_INSTRUCTIONS = """You read one message from the user and return JSON wi
   "list_reminders": the user asks to see, show, or list their reminders.
   "daily_briefing": the user asks for their daily briefing, a summary of their day, or what is on today.
   "weather": the user asks about the weather or whether it will rain.
+  "pc_command": the user asks Jarvis to do something on the computer: open an app, folder, or website, search the web, find a file, change the volume, lock the PC, or say the time or date.
   "delete_item": the user asks to delete, remove, or cancel ONE task, note, or reminder (not "finished": that is complete_task).
-  "confirm_pending": the pending question asks whether to add a task or delete an item, and the user agrees.
+  "confirm_pending": the pending question asks whether to add a task, delete an item, or lock the computer, and the user agrees.
   "give_reminder_time": the pending question asks when to remind the user, and the user gives a time. Put the time in when_text, written clearly (for example "4 pm" or "tomorrow at 8 am").
   "decline_pending": the pending question is not "none" and the user says no, never mind, or cancels.
   "none": anything else.
@@ -105,6 +110,7 @@ def _example(message, tasks="none", pending="none", **fields):
 _COOKIE = 'Should I add the task "Buy a cookie"?'
 _TRASH = 'When should I remind the user about "Take out the trash"?'
 _DELETE = 'Should I delete the reminder "Call mom (Thu, Oct 8 at 7:00 AM)"?'
+_LOCK = "Should I lock the computer?"
 _OPEN = "3: Buy rice\n4: Call the bank"
 
 EXAMPLES = [
@@ -206,6 +212,12 @@ EXAMPLES = [
     _example("Delete my reminder.", action="delete_item", item_kind="reminder"),
     _example("Yes, delete it.", pending=_DELETE, action="confirm_pending"),
     _example("No, keep it.", pending=_DELETE, action="decline_pending"),
+    _example("Open Notepad.", action="pc_command"),
+    _example("Search the web for cheap flights to Cebu.", action="pc_command"),
+    _example("Turn the volume up.", action="pc_command"),
+    _example("What time is it?", action="pc_command"),
+    _example("Find my resume file.", action="pc_command"),
+    _example("Yes, lock it.", pending=_LOCK, action="confirm_pending"),
 ]
 
 ANALYSIS_PROMPT = ANALYSIS_INSTRUCTIONS + "\n\nExamples:\n\n" + "\n\n".join(EXAMPLES)
@@ -223,6 +235,7 @@ VALID_ACTIONS = (
     "daily_briefing",
     "weather",
     "delete_item",
+    "pc_command",
     "confirm_pending",
     "give_reminder_time",
     "decline_pending",
@@ -265,7 +278,7 @@ pending = None
 
 # Safety net: the model sometimes claims it saved or set something when our code did not.
 FALSE_CLAIM = re.compile(
-    r"\b(i('ll| will| have|'ve| am going to)\s+(remind|set|add|save|remember|delete|remove|cancel)\b"
+    r"\b(i('ll| will| have|'ve| am going to)\s+(remind|set|add|save|remember|delete|remove|cancel|open|launch|lock)(ed|d)?\b"
     r"|(reminder|task|note)\s+(has been|is now|was|is)\s+(set|added|saved|created|deleted|removed|cancelled)\b"
     r"|(added|saved|set|deleted|removed|cancelled)\b.{0,40}\b(task|note|reminder|to-do)\b)",
     re.IGNORECASE,
@@ -288,6 +301,10 @@ def analyze_message(user_message):
         pending_text = f'Should I delete the {pending["kind"]} "{pending["label"]}"?'
     elif pending and pending["type"] == "delete_choice":
         pending_text = "Which item should I delete?"
+    elif pending and pending["type"] == "pc_lock":
+        pending_text = "Should I lock the computer?"
+    elif pending and pending["type"] == "file_choice":
+        pending_text = "Which file should I open?"
     else:
         pending_text = "none"
     try:
@@ -455,6 +472,15 @@ def handle_message(user_message):
             add_message("assistant", reply)
             return reply
 
+    # "Which file?" is also answered with a number.
+    if pending and pending["type"] == "file_choice":
+        index = parse_choice(user_message, len(pending["files"]))
+        if index is not None:
+            chosen, pending = pending, None
+            reply = pick_file(chosen, index)
+            add_message("assistant", reply)
+            return reply
+
     analysis = analyze_message(user_message)
     action = analysis["action"]
 
@@ -474,13 +500,19 @@ def handle_message(user_message):
             reply = random.choice(CONFIRM_REPLIES).format(title=previous["value"])
     elif action == "confirm_pending" and previous_type == "delete":
         reply = confirm_delete(previous)
+    elif action == "confirm_pending" and previous_type == "pc_lock":
+            reply = confirm_pc(previous)
     elif action == "delete_item":
-        reply, pending = begin_delete(analysis)
+            reply, pending = begin_delete(analysis)
+    elif action == "pc_command":
+            reply, pending = handle_pc_command(user_message, MODEL, NUM_CTX)
     elif action == "decline_pending" and previous:
-        if previous_type in ("delete", "delete_choice"):
-            reply = "Okay, I won't delete anything."
-        else:
-            reply = random.choice(DECLINE_REPLIES)
+            if previous_type in ("delete", "delete_choice"):
+                reply = "Okay, I won't delete anything."
+            elif previous_type in ("pc_lock", "file_choice"):
+                reply = "Okay, nevermind."
+            else:
+                reply = random.choice(DECLINE_REPLIES)
     elif action == "give_reminder_time" and previous_type == "reminder":
         reply, ok = set_reminder(previous["value"], analysis["when_text"])
         if not ok:

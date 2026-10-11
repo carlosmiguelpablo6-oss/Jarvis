@@ -1,0 +1,17 @@
+{
+  "apps": {
+    "spotify": "C:\\Users\\Asus\\AppData\\Roaming\\Spotify\\Spotify.exe",
+    "canva": "https://www.canva.com"
+  },
+  "folders": {
+    "projects": "C:\\Jarvis"
+  },
+  "sites": {
+    "n8n": "http://localhost:5678"
+  },
+  "search_folders": [
+    "C:\\Users\\Asus\\Documents",
+    "C:\\Users\\Asus\\Downloads",
+    "C:\\Users\\Asus\\Desktop"
+  ]
+}
